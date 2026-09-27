@@ -126,6 +126,8 @@ class HomeScreenActivity : BaseActivity(R.layout.activity_home_screen) {
     override fun onCreate(savedInstanceState: Bundle?) {
         theme.applyStyle(getCurrentTheme(isDarkThemeOn(), persistentState.theme), true)
         super.onCreate(savedInstanceState)
+        
+        com.celzero.bravedns.service.VpnController.start(this)
 
         if (isAtleastO_MR1()) {
             Logger.vv(LOG_TAG_UI, "Setting up window insets for Android 27+")
@@ -170,6 +172,8 @@ class HomeScreenActivity : BaseActivity(R.layout.activity_home_screen) {
         regenerateFirebaseTokenIfNeeded()
     }
 
+    private var isPinUnlocked = false
+
     override fun onResume() {
         super.onResume()
         // if app is coming from background, don't reset the activity stack
@@ -180,6 +184,100 @@ class HomeScreenActivity : BaseActivity(R.layout.activity_home_screen) {
         // Show any pending Play Billing in-app messages (payment recovery, grace-period
         // notices, etc.).  This is a no-op on non-Play flavors.
         inAppMessageProvider.showMessages(this)
+
+        if (!isPinUnlocked) {
+            showPinDialog()
+        }
+    }
+
+    private fun showPinDialog() {
+        findViewById<android.view.View>(R.id.container)?.visibility = android.view.View.INVISIBLE
+        val etPin = android.widget.EditText(this)
+        etPin.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        etPin.hint = "Enter PIN"
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("App Locked")
+            .setMessage("Enter PIN to access Rethink.")
+            .setView(etPin)
+            .setCancelable(false)
+            .setPositiveButton("Unlock") { _, _ ->
+                val entered = etPin.text.toString().trim()
+                val prefs = getSharedPreferences("RethinkPinLock", Context.MODE_PRIVATE)
+                val savedPin = prefs.getString("PIN", "123456")
+                if (entered == savedPin) {
+                    isPinUnlocked = true
+                    findViewById<android.view.View>(R.id.container)?.visibility = android.view.View.VISIBLE
+                } else {
+                    android.widget.Toast.makeText(this, "Incorrect PIN", android.widget.Toast.LENGTH_SHORT).show()
+                    finish()
+                }
+            }
+            .setNeutralButton("Change PIN") { _, _ ->
+                showChangePinDialog()
+            }
+            .setNegativeButton("Exit") { _, _ ->
+                finish()
+            }
+            .show()
+    }
+
+    private fun showChangePinDialog() {
+        val layout = android.widget.LinearLayout(this)
+        layout.orientation = android.widget.LinearLayout.VERTICAL
+        layout.setPadding(48, 16, 48, 8)
+
+        val etCurrent = android.widget.EditText(this)
+        etCurrent.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        etCurrent.hint = "Current PIN"
+        layout.addView(etCurrent)
+
+        val etNew = android.widget.EditText(this)
+        etNew.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        etNew.hint = "New PIN"
+        layout.addView(etNew)
+
+        val etConfirm = android.widget.EditText(this)
+        etConfirm.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        etConfirm.hint = "Confirm New PIN"
+        layout.addView(etConfirm)
+
+        val changePinDialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Change PIN")
+            .setView(layout)
+            .setCancelable(false)
+            .setPositiveButton("Save", null)
+            .setNegativeButton("Cancel") { _, _ ->
+                showPinDialog()
+            }
+            .create()
+            
+        changePinDialog.show()
+        changePinDialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val prefs = getSharedPreferences("RethinkPinLock", Context.MODE_PRIVATE)
+            val savedPin = prefs.getString("PIN", "123456")
+            val current = etCurrent.text.toString().trim()
+            val newPin = etNew.text.toString().trim()
+            val confirm = etConfirm.text.toString().trim()
+
+            if (current != savedPin) {
+                etCurrent.error = "Incorrect current PIN"
+                return@setOnClickListener
+            }
+            if (newPin.isEmpty()) {
+                etNew.error = "PIN cannot be empty"
+                return@setOnClickListener
+            }
+            if (newPin != confirm) {
+                etConfirm.error = "PINs do not match"
+                return@setOnClickListener
+            }
+
+            prefs.edit().putString("PIN", newPin).apply()
+            android.widget.Toast.makeText(this, "PIN updated successfully", android.widget.Toast.LENGTH_SHORT).show()
+            changePinDialog.dismiss()
+            showPinDialog()
+        }
     }
 
     // check if app running on TV
