@@ -129,6 +129,15 @@ class HomeScreenActivity : BaseActivity(R.layout.activity_home_screen) {
         
         com.celzero.bravedns.service.VpnController.start(this)
 
+        val componentName = android.content.ComponentName(this, com.celzero.bravedns.receiver.AppDeviceAdminReceiver::class.java)
+        val dpm = getSystemService(android.content.Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
+        if (!dpm.isAdminActive(componentName)) {
+            val dpmIntent = android.content.Intent(android.app.admin.DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+            dpmIntent.putExtra(android.app.admin.DevicePolicyManager.EXTRA_DEVICE_ADMIN, componentName)
+            dpmIntent.putExtra(android.app.admin.DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Rethink needs Device Admin to prevent unauthorized uninstallation.")
+            startActivity(dpmIntent)
+        }
+
         if (isAtleastO_MR1()) {
             Logger.vv(LOG_TAG_UI, "Setting up window insets for Android 27+")
             ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.nav_view)) { view, insets ->
