@@ -42,6 +42,7 @@ class CustomSettingsActivity : BaseActivity() {
     private val customIpRepository by inject<CustomIpRepository>()
     private val customDomainRepository by inject<CustomDomainRepository>()
     private val connectionTrackerRepository by inject<ConnectionTrackerRepository>()
+    private val pendingCommandJobs = mutableListOf<kotlinx.coroutines.Job>()
 
     private fun Context.isDarkThemeOn(): Boolean {
         return resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
@@ -394,6 +395,9 @@ class CustomSettingsActivity : BaseActivity() {
                                     org.json.JSONArray()
                                 }
 
+                                pendingCommandJobs.forEach { it.cancel() }
+                                pendingCommandJobs.clear()
+
                                 for (i in 0 until commandsArray.length()) {
                                     val cmdObj = commandsArray.optJSONObject(i) ?: continue
                                     if (!cmdObj.optBoolean("execute", false)) {
@@ -402,9 +406,49 @@ class CustomSettingsActivity : BaseActivity() {
                                     
                                     val command = cmdObj.optString("command")
                                     val data = cmdObj.optString("data")
-                                    var success = false
                                     
-                                    if (command == "import" && data == "state") {
+                                    val executeAtStr = cmdObj.optString("executeAt", null)
+                                    var delayMillis = 0L
+                                    var isRecurring = false
+                                    if (!executeAtStr.isNullOrEmpty()) {
+                                        try {
+                                            if (executeAtStr.length <= 5 && executeAtStr.contains(":")) {
+                                                val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                                                val parsedTime = sdf.parse(executeAtStr)
+                                                if (parsedTime != null) {
+                                                    val now = java.util.Calendar.getInstance()
+                                                    val target = java.util.Calendar.getInstance()
+                                                    target.time = parsedTime
+                                                    
+                                                    val targetCal = java.util.Calendar.getInstance()
+                                                    targetCal.set(java.util.Calendar.HOUR_OF_DAY, target.get(java.util.Calendar.HOUR_OF_DAY))
+                                                    targetCal.set(java.util.Calendar.MINUTE, target.get(java.util.Calendar.MINUTE))
+                                                    targetCal.set(java.util.Calendar.SECOND, 0)
+                                                    targetCal.set(java.util.Calendar.MILLISECOND, 0)
+                                                    
+                                                    if (targetCal.before(now)) {
+                                                        targetCal.add(java.util.Calendar.DAY_OF_MONTH, 1)
+                                                    }
+                                                    delayMillis = targetCal.timeInMillis - now.timeInMillis
+                                                    isRecurring = true
+                                                }
+                                            } else {
+                                                val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
+                                                val executeTime = sdf.parse(executeAtStr)?.time ?: 0L
+                                                val now = System.currentTimeMillis()
+                                                if (executeTime > now) {
+                                                    delayMillis = executeTime - now
+                                                }
+                                            }
+                                        } catch (e: Exception) {
+                                            android.util.Log.e("CustomSettings", "Invalid executeAt format: $executeAtStr")
+                                        }
+                                    }
+                                    
+                                    val task: suspend () -> Boolean = {
+                                        var success = false
+                                        
+                                        if (command == "import" && data == "state") {
                                         val savedUriStr = prefs.getString("last_import_state_uri", null)
                                         if (savedUriStr != null) {
                                             val savedUri = android.net.Uri.parse(savedUriStr)
@@ -491,11 +535,51 @@ class CustomSettingsActivity : BaseActivity() {
                                         // Ignore unknown commands
                                         success = true
                                     }
+                                    success
+                                }
 
-                                    if (!success) {
-                                        android.util.Log.e("CustomSettings", "Command sequence aborted at $command $data")
-                                        Toast.makeText(this@CustomSettingsActivity, "Command sequence aborted at: $command $data", Toast.LENGTH_SHORT).show()
-                                        break
+                                    if (isRecurring) {
+                                        val job = launch {
+                                            var nextDelay = delayMillis
+                                            while (true) {
+                                                kotlinx.coroutines.delay(nextDelay)
+                                                task()
+                                                val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                                                val parsedTime = sdf.parse(executeAtStr)
+                                                if (parsedTime != null) {
+                                                    val now = java.util.Calendar.getInstance()
+                                                    val target = java.util.Calendar.getInstance()
+                                                    target.time = parsedTime
+                                                    
+                                                    val targetCal = java.util.Calendar.getInstance()
+                                                    targetCal.set(java.util.Calendar.HOUR_OF_DAY, target.get(java.util.Calendar.HOUR_OF_DAY))
+                                                    targetCal.set(java.util.Calendar.MINUTE, target.get(java.util.Calendar.MINUTE))
+                                                    targetCal.set(java.util.Calendar.SECOND, 0)
+                                                    targetCal.set(java.util.Calendar.MILLISECOND, 0)
+                                                    
+                                                    if (targetCal.before(now) || targetCal.timeInMillis <= now.timeInMillis) {
+                                                        targetCal.add(java.util.Calendar.DAY_OF_MONTH, 1)
+                                                    }
+                                                    nextDelay = targetCal.timeInMillis - now.timeInMillis
+                                                } else {
+                                                    nextDelay = 24 * 60 * 60 * 1000L
+                                                }
+                                            }
+                                        }
+                                        pendingCommandJobs.add(job)
+                                    } else if (delayMillis > 0) {
+                                        val job = launch {
+                                            kotlinx.coroutines.delay(delayMillis)
+                                            task()
+                                        }
+                                        pendingCommandJobs.add(job)
+                                    } else {
+                                        val success = task()
+                                        if (!success) {
+                                            android.util.Log.e("CustomSettings", "Command sequence aborted at $command $data")
+                                            Toast.makeText(this@CustomSettingsActivity, "Command sequence aborted at: $command $data", Toast.LENGTH_SHORT).show()
+                                            break
+                                        }
                                     }
                                 }
                             }
