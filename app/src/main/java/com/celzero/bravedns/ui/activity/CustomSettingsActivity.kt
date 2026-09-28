@@ -59,11 +59,16 @@ class CustomSettingsActivity : BaseActivity() {
                 showAppLockOptionsDialog()
             }
 
+            val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
+
             b.acsExportStateCard.setOnClickListener {
                 val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     type = "application/json"
                     putExtra(Intent.EXTRA_TITLE, "rethink_state.json")
+                    prefs.getString("last_export_state_uri", null)?.let { uriStr ->
+                        putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.net.Uri.parse(uriStr))
+                    }
                 }
                 createDocumentLauncher.launch(intent)
             }
@@ -71,9 +76,27 @@ class CustomSettingsActivity : BaseActivity() {
             b.acsImportStateCard.setOnClickListener {
                 val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "application/json"
+                    type = "*/*"
+                    val mimeTypes = arrayOf("application/json", "text/plain", "text/javascript", "application/octet-stream")
+                    putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+                    prefs.getString("last_import_state_uri", null)?.let { uriStr ->
+                        putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.net.Uri.parse(uriStr))
+                    }
                 }
                 openDocumentLauncher.launch(intent)
+            }
+
+            b.acsImportCommandsCard.setOnClickListener {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                    val mimeTypes = arrayOf("application/json", "text/plain", "text/javascript", "application/octet-stream")
+                    putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+                    prefs.getString("last_import_commands_uri", null)?.let { uriStr ->
+                        putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.net.Uri.parse(uriStr))
+                    }
+                }
+                importCommandsLauncher.launch(intent)
             }
 
             b.acsExportExcelCard.setOnClickListener {
@@ -81,6 +104,9 @@ class CustomSettingsActivity : BaseActivity() {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     type = "application/vnd.ms-excel"
                     putExtra(Intent.EXTRA_TITLE, "rethink_logs.xls")
+                    prefs.getString("last_export_logs_uri", null)?.let { uriStr ->
+                        putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.net.Uri.parse(uriStr))
+                    }
                 }
                 exportExcelLauncher.launch(intent)
             }
@@ -96,90 +122,110 @@ class CustomSettingsActivity : BaseActivity() {
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
                     try {
-                        val state = VpnController.state()
-                        val status = if (state.on) "started" else "stopped"
-                        val json = JSONObject()
-                        json.put("status", status)
-
-                        val universal = JSONObject()
-                        universal.put("blockWhenDeviceLocked", persistentState.getBlockWhenDeviceLocked())
-                        universal.put("blockAppWhenBackground", persistentState.getBlockAppWhenBackground())
-                        universal.put("udpBlocked", persistentState.getUdpBlocked())
-                        universal.put("blockUnknownConnections", persistentState.getBlockUnknownConnections())
-                        universal.put("disallowDnsBypass", persistentState.getDisallowDnsBypass())
-                        universal.put("blockNewlyInstalledApp", persistentState.getBlockNewlyInstalledApp())
-                        universal.put("blockMeteredConnections", persistentState.getBlockMeteredConnections())
-
-                        json.put("universal", universal)
-
-                        lifecycleScope.launch {
-                            val ipportParent = JSONObject()
-                            val perappParent = JSONObject()
-
-                            val ipRules = withContext(Dispatchers.IO) { customIpRepository.getIpRules() }
-                            val universalIpportArray = JSONArray()
-                            val perappIpportArray = JSONArray()
-                            for (rule in ipRules) {
-                                val ruleJson = JSONObject()
-                                ruleJson.put("uid", rule.uid)
-                                ruleJson.put("ipAddress", rule.ipAddress)
-                                ruleJson.put("port", rule.port)
-                                ruleJson.put("protocol", rule.protocol)
-                                ruleJson.put("isActive", rule.isActive)
-                                ruleJson.put("status", rule.status)
-                                
-                                if (rule.uid == com.celzero.bravedns.util.Constants.UID_EVERYBODY) {
-                                    universalIpportArray.put(ruleJson)
-                                } else {
-                                    perappIpportArray.put(ruleJson)
-                                }
-                            }
-                            ipportParent.put("ipport", universalIpportArray)
-                            perappParent.put("ipport", perappIpportArray)
-
-                            val domainRules = withContext(Dispatchers.IO) { customDomainRepository.getAllCustomDomains() }
-                            val universalDomainArray = JSONArray()
-                            val perappDomainArray = JSONArray()
-                            for (rule in domainRules) {
-                                val ruleJson = JSONObject()
-                                ruleJson.put("domain", rule.domain)
-                                ruleJson.put("uid", rule.uid)
-                                ruleJson.put("ips", rule.ips)
-                                ruleJson.put("status", rule.status)
-                                ruleJson.put("type", rule.type)
-                                
-                                if (rule.uid == com.celzero.bravedns.util.Constants.UID_EVERYBODY) {
-                                    universalDomainArray.put(ruleJson)
-                                } else {
-                                    perappDomainArray.put(ruleJson)
-                                }
-                            }
-                            ipportParent.put("domain", universalDomainArray)
-                            perappParent.put("domain", perappDomainArray)
-
-                            json.put("ipport", ipportParent)
-                            json.put("perapp", perappParent)
-
-                            withContext(Dispatchers.IO) {
-                                contentResolver.openOutputStream(uri)?.use { outputStream ->
-                                    OutputStreamWriter(outputStream).use { writer ->
-                                        writer.write(json.toString(2))
-                                    }
-                                }
-                            }
-                            Toast.makeText(this@CustomSettingsActivity, "State exported successfully", Toast.LENGTH_SHORT).show()
-                        }
+                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
+                        prefs.edit().putString("last_export_state_uri", uri.toString()).apply()
                     } catch (e: Exception) {
-                        Toast.makeText(this, "Error exporting state", Toast.LENGTH_SHORT).show()
+                        android.util.Log.e("CustomSettings", "Failed to take persistable URI permission for export", e)
+                    }
+                    
+                    lifecycleScope.launch {
+                        try {
+                            exportStateToJson(uri)
+                            Toast.makeText(this@CustomSettingsActivity, "State exported successfully", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(this@CustomSettingsActivity, "Error exporting state", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
             }
         }
 
+    private suspend fun exportStateToJson(uri: android.net.Uri) {
+        val state = VpnController.state()
+        val status = if (state.on) "started" else "stopped"
+        val json = JSONObject()
+        json.put("status", status)
+
+        val universal = JSONObject()
+        universal.put("blockWhenDeviceLocked", persistentState.getBlockWhenDeviceLocked())
+        universal.put("blockAppWhenBackground", persistentState.getBlockAppWhenBackground())
+        universal.put("udpBlocked", persistentState.getUdpBlocked())
+        universal.put("blockUnknownConnections", persistentState.getBlockUnknownConnections())
+        universal.put("disallowDnsBypass", persistentState.getDisallowDnsBypass())
+        universal.put("blockNewlyInstalledApp", persistentState.getBlockNewlyInstalledApp())
+        universal.put("blockMeteredConnections", persistentState.getBlockMeteredConnections())
+
+        json.put("universal", universal)
+
+        val ipportParent = JSONObject()
+        val perappParent = JSONObject()
+
+        val ipRules = withContext(Dispatchers.IO) { customIpRepository.getIpRules() }
+        val universalIpportArray = JSONArray()
+        val perappIpportArray = JSONArray()
+        for (rule in ipRules) {
+            val ruleJson = JSONObject()
+            ruleJson.put("uid", rule.uid)
+            ruleJson.put("ipAddress", rule.ipAddress)
+            ruleJson.put("port", rule.port)
+            ruleJson.put("protocol", rule.protocol)
+            ruleJson.put("isActive", rule.isActive)
+            ruleJson.put("status", rule.status)
+            
+            if (rule.uid == com.celzero.bravedns.util.Constants.UID_EVERYBODY) {
+                universalIpportArray.put(ruleJson)
+            } else {
+                perappIpportArray.put(ruleJson)
+            }
+        }
+        ipportParent.put("ipport", universalIpportArray)
+        perappParent.put("ipport", perappIpportArray)
+
+        val domainRules = withContext(Dispatchers.IO) { customDomainRepository.getAllCustomDomains() }
+        val universalDomainArray = JSONArray()
+        val perappDomainArray = JSONArray()
+        for (rule in domainRules) {
+            val ruleJson = JSONObject()
+            ruleJson.put("domain", rule.domain)
+            ruleJson.put("uid", rule.uid)
+            ruleJson.put("ips", rule.ips)
+            ruleJson.put("status", rule.status)
+            ruleJson.put("type", rule.type)
+            
+            if (rule.uid == com.celzero.bravedns.util.Constants.UID_EVERYBODY) {
+                universalDomainArray.put(ruleJson)
+            } else {
+                perappDomainArray.put(ruleJson)
+            }
+        }
+        ipportParent.put("domain", universalDomainArray)
+        perappParent.put("domain", perappDomainArray)
+
+        json.put("ipport", ipportParent)
+        json.put("perapp", perappParent)
+
+        withContext(Dispatchers.IO) {
+            contentResolver.openOutputStream(uri, "wt")?.use { outputStream ->
+                OutputStreamWriter(outputStream).use { writer ->
+                    writer.write(json.toString(2))
+                }
+            }
+        }
+    }
+
     private val exportExcelLauncher =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == android.app.Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
+                    try {
+                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
+                        prefs.edit().putString("last_export_logs_uri", uri.toString()).apply()
+                    } catch (e: Exception) {
+                        android.util.Log.e("CustomSettings", "Failed to take persistable URI permission for logs", e)
+                    }
+
                     lifecycleScope.launch {
                         try {
                             Toast.makeText(this@CustomSettingsActivity, "Exporting logs to Excel...", Toast.LENGTH_SHORT).show()
@@ -265,6 +311,14 @@ class CustomSettingsActivity : BaseActivity() {
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == android.app.Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
+                    try {
+                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
+                        prefs.edit().putString("last_import_state_uri", uri.toString()).apply()
+                    } catch (e: Exception) {
+                        android.util.Log.e("CustomSettings", "Failed to take persistable URI permission", e)
+                    }
+
                     lifecycleScope.launch {
                         try {
                             val jsonString = withContext(Dispatchers.IO) {
@@ -280,6 +334,67 @@ class CustomSettingsActivity : BaseActivity() {
                         } catch (e: Exception) {
                             android.util.Log.e("CustomSettings", "Error importing state", e)
                             Toast.makeText(this@CustomSettingsActivity, "Error importing state: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+        }
+
+    private val importCommandsLauncher =
+        registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == android.app.Activity.RESULT_OK) {
+                result.data?.data?.let { uri ->
+                    try {
+                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
+                        prefs.edit().putString("last_import_commands_uri", uri.toString()).apply()
+                    } catch (e: Exception) {
+                        android.util.Log.e("CustomSettings", "Failed to take persistable URI permission", e)
+                    }
+
+                    lifecycleScope.launch {
+                        try {
+                            val jsonString = withContext(Dispatchers.IO) {
+                                contentResolver.openInputStream(uri)?.use { inputStream ->
+                                    InputStreamReader(inputStream).readText()
+                                }
+                            }
+                            if (jsonString != null) {
+                                val commandJson = JSONObject(jsonString)
+                                val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
+                                
+                                if (commandJson.optBoolean("import_state", false)) {
+                                    val savedUriStr = prefs.getString("last_import_state_uri", null)
+                                    if (savedUriStr != null) {
+                                        val savedUri = android.net.Uri.parse(savedUriStr)
+                                        val stateJsonString = withContext(Dispatchers.IO) {
+                                            contentResolver.openInputStream(savedUri)?.use { inputStream ->
+                                                InputStreamReader(inputStream).readText()
+                                            }
+                                        }
+                                        if (stateJsonString != null) {
+                                            importStateFromJson(JSONObject(stateJsonString))
+                                            Toast.makeText(this@CustomSettingsActivity, "Command executed: State imported", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } else {
+                                        Toast.makeText(this@CustomSettingsActivity, "No previously selected state import file found", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                                
+                                if (commandJson.optBoolean("export_state", false)) {
+                                    val savedUriStr = prefs.getString("last_export_state_uri", null)
+                                    if (savedUriStr != null) {
+                                        val savedUri = android.net.Uri.parse(savedUriStr)
+                                        exportStateToJson(savedUri)
+                                        Toast.makeText(this@CustomSettingsActivity, "Command executed: State exported", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(this@CustomSettingsActivity, "No previously selected state export file found", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("CustomSettings", "Error importing commands", e)
+                            Toast.makeText(this@CustomSettingsActivity, "Error importing commands: ${e.message}", Toast.LENGTH_LONG).show()
                         }
                     }
                 }
