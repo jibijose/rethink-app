@@ -207,7 +207,29 @@ class CustomSettingsActivity : BaseActivity() {
 
         val headerRow = sheet.createRow(0)
         for ((index, header) in headers.withIndex()) {
-            headerRow.createCell(index).setCellValue(header)
+            val cell = headerRow.createCell(index)
+            cell.setCellValue(header)
+        }
+
+        // Set reasonable fixed widths instead of autoSizeColumn (which crashes on Android without awt fonts)
+        // Values are in units of 1/256th of a character width
+        val columnWidths = intArrayOf(
+            5500, // Time
+            6000, // App Name
+            7000, // Package
+            4500, // IP Address
+            2000, // Port
+            2500, // Protocol
+            2500, // Blocked?
+            4000, // Blocked By
+            6000, // Target IP
+            3000, // Flag
+            8000, // Message
+            4000, // Download
+            4000  // Upload
+        )
+        for (i in columnWidths.indices) {
+            sheet.setColumnWidth(i, columnWidths[i])
         }
 
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
@@ -228,6 +250,10 @@ class CustomSettingsActivity : BaseActivity() {
             row.createCell(11).setCellValue(log.downloadBytes.toString())
             row.createCell(12).setCellValue(log.uploadBytes.toString())
         }
+
+        sheet.createFreezePane(0, 1) // Freeze top row
+        // Add auto filter
+        sheet.setAutoFilter(org.apache.poi.ss.util.CellRangeAddress(0, logs.size, 0, headers.size - 1))
 
         contentResolver.openOutputStream(uri)?.use { outputStream ->
             workbook.write(outputStream)

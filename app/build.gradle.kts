@@ -660,6 +660,6 @@ dependencies {
     "playImplementation"(libs.googleFirebaseFirebaseCrashlytics)
     "playImplementation"(libs.googleFirebaseFirebaseCrashlyticsNdk)
 
-    // Apache POI for Excel export (.xls only)
-    implementation("org.apache.poi:poi:3.17")
+    // Android port of Apache POI for Excel export (.xls only)
+    implementation("com.github.SUPERCILEX.poi-android:poi:3.17")
 }
