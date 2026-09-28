@@ -71,16 +71,12 @@ class CustomSettingsActivity : BaseActivity() {
             }
 
             b.acsImportStateCard.setOnClickListener {
-                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "*/*"
-                    val mimeTypes = arrayOf("application/json", "text/plain", "text/javascript", "application/octet-stream")
-                    putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                     prefs.getString("last_import_state_uri", null)?.let { uriStr ->
                         putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.net.Uri.parse(uriStr))
                     }
                 }
-                openDocumentLauncher.launch(intent)
+                openStateTreeLauncher.launch(intent)
             }
 
             b.acsImportCommandsCard.setOnClickListener {
@@ -252,8 +248,19 @@ class CustomSettingsActivity : BaseActivity() {
             }
         }
 
-    private suspend fun exportLogsToExcel(uri: android.net.Uri) = withContext(Dispatchers.IO) {
-        val logs = connectionTrackerRepository.getAllLogs()
+    private suspend fun exportLogsToExcel(uri: android.net.Uri, fromTime: Long? = null, toTime: Long? = null) = withContext(Dispatchers.IO) {
+        val actualFrom = fromTime ?: run {
+            val cal = java.util.Calendar.getInstance()
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal.set(java.util.Calendar.MINUTE, 0)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.set(java.util.Calendar.MILLISECOND, 0)
+            cal.timeInMillis
+        }
+        val actualTo = toTime ?: System.currentTimeMillis()
+        
+        val allLogs = connectionTrackerRepository.getAllLogs()
+        val logs = allLogs.filter { it.timeStamp in actualFrom..actualTo }
         val workbook = HSSFWorkbook()
         val sheet = workbook.createSheet("Network Logs")
 
@@ -319,12 +326,12 @@ class CustomSettingsActivity : BaseActivity() {
         workbook.close()
     }
 
-    private val openDocumentLauncher =
+    private val openStateTreeLauncher =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == android.app.Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
                     try {
-                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
                         val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
                         prefs.edit().putString("last_import_state_uri", uri.toString()).apply()
                     } catch (e: Exception) {
@@ -333,15 +340,21 @@ class CustomSettingsActivity : BaseActivity() {
 
                     lifecycleScope.launch {
                         try {
-                            val jsonString = withContext(Dispatchers.IO) {
-                                contentResolver.openInputStream(uri)?.use { inputStream ->
-                                    InputStreamReader(inputStream).readText()
+                            val treeDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(this@CustomSettingsActivity, uri)
+                            val fileDoc = treeDoc?.findFile("rethink_state.json")
+                            if (fileDoc != null && fileDoc.canRead()) {
+                                val jsonString = withContext(Dispatchers.IO) {
+                                    contentResolver.openInputStream(fileDoc.uri)?.use { inputStream ->
+                                        InputStreamReader(inputStream).readText()
+                                    }
                                 }
-                            }
-                            if (jsonString != null) {
-                                val json = JSONObject(jsonString)
-                                importStateFromJson(json)
-                                Toast.makeText(this@CustomSettingsActivity, "State imported successfully", Toast.LENGTH_SHORT).show()
+                                if (jsonString != null) {
+                                    val json = JSONObject(jsonString)
+                                    importStateFromJson(json)
+                                    Toast.makeText(this@CustomSettingsActivity, "State imported successfully from folder", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Toast.makeText(this@CustomSettingsActivity, "rethink_state.json not found in the selected folder", Toast.LENGTH_LONG).show()
                             }
                         } catch (e: Exception) {
                             android.util.Log.e("CustomSettings", "Error importing state", e)
@@ -379,17 +392,28 @@ class CustomSettingsActivity : BaseActivity() {
                                     val savedUriStr = prefs.getString("last_import_state_uri", null)
                                     if (savedUriStr != null) {
                                         val savedUri = android.net.Uri.parse(savedUriStr)
-                                        val stateJsonString = withContext(Dispatchers.IO) {
-                                            contentResolver.openInputStream(savedUri)?.use { inputStream ->
-                                                InputStreamReader(inputStream).readText()
+                                        try {
+                                            val treeDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(this@CustomSettingsActivity, savedUri)
+                                            val importFileName = commandJson.optString("import_file", "rethink_state.json")
+                                            val fileDoc = treeDoc?.findFile(importFileName)
+                                            if (fileDoc != null && fileDoc.canRead()) {
+                                                val stateJsonString = withContext(Dispatchers.IO) {
+                                                    contentResolver.openInputStream(fileDoc.uri)?.use { inputStream ->
+                                                        InputStreamReader(inputStream).readText()
+                                                    }
+                                                }
+                                                if (stateJsonString != null) {
+                                                    importStateFromJson(JSONObject(stateJsonString))
+                                                    Toast.makeText(this@CustomSettingsActivity, "Command executed: State imported from folder", Toast.LENGTH_SHORT).show()
+                                                }
+                                            } else {
+                                                Toast.makeText(this@CustomSettingsActivity, "Command failed: $importFileName not found in folder", Toast.LENGTH_LONG).show()
                                             }
-                                        }
-                                        if (stateJsonString != null) {
-                                            importStateFromJson(JSONObject(stateJsonString))
-                                            Toast.makeText(this@CustomSettingsActivity, "Command executed: State imported", Toast.LENGTH_SHORT).show()
+                                        } catch (e: Exception) {
+                                            Toast.makeText(this@CustomSettingsActivity, "Error importing state: ${e.message}", Toast.LENGTH_LONG).show()
                                         }
                                     } else {
-                                        Toast.makeText(this@CustomSettingsActivity, "No previously selected state import file found", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(this@CustomSettingsActivity, "No previously selected state import folder found", Toast.LENGTH_LONG).show()
                                     }
                                 }
                                 
@@ -428,7 +452,17 @@ class CustomSettingsActivity : BaseActivity() {
                                             val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(savedUri, docId)
                                             val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/vnd.ms-excel", "rethink_logs_${timestamp}.xls")
                                             if (newFileUri != null) {
-                                                exportLogsToExcel(newFileUri)
+                                                val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
+                                                var fromTime: Long? = null
+                                                if (commandJson.has("export_logs_from")) {
+                                                    fromTime = sdf.parse(commandJson.getString("export_logs_from"))?.time
+                                                }
+                                                var toTime: Long? = null
+                                                if (commandJson.has("export_logs_to")) {
+                                                    toTime = sdf.parse(commandJson.getString("export_logs_to"))?.time
+                                                }
+                                                
+                                                exportLogsToExcel(newFileUri, fromTime, toTime)
                                                 Toast.makeText(this@CustomSettingsActivity, "Command executed: Logs exported to new file", Toast.LENGTH_SHORT).show()
                                             } else {
                                                 Toast.makeText(this@CustomSettingsActivity, "Command failed: Could not create new logs file in folder", Toast.LENGTH_LONG).show()
