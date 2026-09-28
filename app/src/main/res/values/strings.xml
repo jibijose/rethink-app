@@ -3086,4 +3086,8 @@
     <string name="connection_check_steps_heading" translatable="false">Reason chain</string>
     <string name="connection_check_err_domain" translatable="false">Enter a domain to check</string>
     <string name="connection_check_err_ip" translatable="false">Enter a valid IP address</string>
+    <string name="lbl_custom_settings" translatable="false">Custom settings</string>
+    <string name="fs_configure_custom_settings_desc" translatable="false">App lock and state export</string>
+    <string name="lbl_export_state" translatable="false">Export State to JSON</string>
+    <string name="lbl_export_state_desc" translatable="false">Save current rethink start/stop state to a JSON file</string>
 </resources>
