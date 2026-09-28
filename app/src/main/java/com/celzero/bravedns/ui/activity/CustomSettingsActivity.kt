@@ -384,114 +384,117 @@ class CustomSettingsActivity : BaseActivity() {
                                 }
                             }
                             if (jsonString != null) {
-                                val commandJson = JSONObject(jsonString)
                                 val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
-                                val iterator = commandJson.keys()
-                                
-                                while (iterator.hasNext()) {
-                                    val key = iterator.next()
-                                    if (!commandJson.optBoolean(key, false)) {
+                                val root = org.json.JSONTokener(jsonString).nextValue()
+                                val commandsArray = if (root is org.json.JSONArray) {
+                                    root
+                                } else if (root is JSONObject) {
+                                    root.optJSONArray("commands") ?: org.json.JSONArray()
+                                } else {
+                                    org.json.JSONArray()
+                                }
+
+                                for (i in 0 until commandsArray.length()) {
+                                    val cmdObj = commandsArray.optJSONObject(i) ?: continue
+                                    if (!cmdObj.optBoolean("execute", false)) {
                                         continue
                                     }
                                     
+                                    val command = cmdObj.optString("command")
+                                    val data = cmdObj.optString("data")
                                     var success = false
-                                    when (key) {
-                                        "import_state" -> {
-                                            val savedUriStr = prefs.getString("last_import_state_uri", null)
-                                            if (savedUriStr != null) {
-                                                val savedUri = android.net.Uri.parse(savedUriStr)
-                                                try {
-                                                    val importFileName = commandJson.optString("import_file", "rethink_state.json")
-                                                    val fileUri = findFileUriInTree(savedUri, importFileName)
-                                                    if (fileUri != null) {
-                                                        val stateJsonString = withContext(Dispatchers.IO) {
-                                                            contentResolver.openInputStream(fileUri)?.use { inputStream ->
-                                                                InputStreamReader(inputStream).readText()
-                                                            }
-                                                        }
-                                                        if (stateJsonString != null) {
-                                                            importStateFromJson(JSONObject(stateJsonString))
-                                                            Toast.makeText(this@CustomSettingsActivity, "Command executed: State imported", Toast.LENGTH_SHORT).show()
-                                                            success = true
-                                                        }
-                                                    } else {
-                                                        Toast.makeText(this@CustomSettingsActivity, "Command failed: $importFileName not found", Toast.LENGTH_LONG).show()
-                                                    }
-                                                } catch (e: Exception) {
-                                                    Toast.makeText(this@CustomSettingsActivity, "Error importing state: ${e.message}", Toast.LENGTH_LONG).show()
-                                                }
-                                            } else {
-                                                Toast.makeText(this@CustomSettingsActivity, "No previously selected state import folder found", Toast.LENGTH_LONG).show()
-                                            }
-                                        }
-                                        
-                                        "export_state" -> {
-                                            val savedUriStr = prefs.getString("last_export_state_uri", null)
-                                            if (savedUriStr != null) {
-                                                val savedUri = android.net.Uri.parse(savedUriStr)
-                                                try {
-                                                    val formatter = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
-                                                    val timestamp = formatter.format(java.util.Date())
-                                                    val docId = android.provider.DocumentsContract.getTreeDocumentId(savedUri)
-                                                    val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(savedUri, docId)
-                                                    val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/json", "rethink_state_${timestamp}.json")
-                                                    if (newFileUri != null) {
-                                                        exportStateToJson(newFileUri)
-                                                        Toast.makeText(this@CustomSettingsActivity, "Command executed: State exported", Toast.LENGTH_SHORT).show()
-                                                        success = true
-                                                    } else {
-                                                        Toast.makeText(this@CustomSettingsActivity, "Command failed: Could not create file", Toast.LENGTH_LONG).show()
-                                                    }
-                                                } catch (e: Exception) {
-                                                    Toast.makeText(this@CustomSettingsActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                                                }
-                                            } else {
-                                                Toast.makeText(this@CustomSettingsActivity, "No previously selected state export folder found", Toast.LENGTH_LONG).show()
-                                            }
-                                        }
-                                        
-                                        "export_logs" -> {
-                                            val savedUriStr = prefs.getString("last_export_logs_uri", null)
-                                            if (savedUriStr != null) {
-                                                val savedUri = android.net.Uri.parse(savedUriStr)
-                                                try {
-                                                    val formatter = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
-                                                    val timestamp = formatter.format(java.util.Date())
-                                                    val docId = android.provider.DocumentsContract.getTreeDocumentId(savedUri)
-                                                    val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(savedUri, docId)
-                                                    val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/vnd.ms-excel", "rethink_logs_${timestamp}.xls")
-                                                    if (newFileUri != null) {
-                                                        val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
-                                                        var fromTime: Long? = null
-                                                        if (commandJson.has("export_logs_from")) {
-                                                            fromTime = sdf.parse(commandJson.getString("export_logs_from"))?.time
-                                                        }
-                                                        var toTime: Long? = null
-                                                        if (commandJson.has("export_logs_to")) {
-                                                            toTime = sdf.parse(commandJson.getString("export_logs_to"))?.time
-                                                        }
-                                                        
-                                                        exportLogsToExcel(newFileUri, fromTime, toTime)
-                                                        Toast.makeText(this@CustomSettingsActivity, "Command executed: Logs exported", Toast.LENGTH_SHORT).show()
-                                                        success = true
-                                                    } else {
-                                                        Toast.makeText(this@CustomSettingsActivity, "Command failed: Could not create logs file", Toast.LENGTH_LONG).show()
-                                                    }
-                                                } catch (e: Exception) {
-                                                    Toast.makeText(this@CustomSettingsActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                                                }
-                                            } else {
-                                                Toast.makeText(this@CustomSettingsActivity, "No previously selected logs export folder found", Toast.LENGTH_LONG).show()
-                                            }
-                                        }
-                                        else -> {
-                                            success = true
-                                        }
-                                    }
                                     
+                                    if (command == "import" && data == "state") {
+                                        val savedUriStr = prefs.getString("last_import_state_uri", null)
+                                        if (savedUriStr != null) {
+                                            val savedUri = android.net.Uri.parse(savedUriStr)
+                                            try {
+                                                val importFileName = cmdObj.optString("file", "rethink_state.json")
+                                                val fileUri = findFileUriInTree(savedUri, importFileName)
+                                                if (fileUri != null) {
+                                                    val stateJsonString = withContext(Dispatchers.IO) {
+                                                        contentResolver.openInputStream(fileUri)?.use { inputStream ->
+                                                            InputStreamReader(inputStream).readText()
+                                                        }
+                                                    }
+                                                    if (stateJsonString != null) {
+                                                        importStateFromJson(JSONObject(stateJsonString))
+                                                        Toast.makeText(this@CustomSettingsActivity, "Command executed: State imported", Toast.LENGTH_SHORT).show()
+                                                        success = true
+                                                    }
+                                                } else {
+                                                    Toast.makeText(this@CustomSettingsActivity, "Command failed: $importFileName not found", Toast.LENGTH_LONG).show()
+                                                }
+                                            } catch (e: Exception) {
+                                                Toast.makeText(this@CustomSettingsActivity, "Error importing state: ${e.message}", Toast.LENGTH_LONG).show()
+                                            }
+                                        } else {
+                                            Toast.makeText(this@CustomSettingsActivity, "No previously selected state import folder found", Toast.LENGTH_LONG).show()
+                                        }
+                                    } else if (command == "export" && data == "state") {
+                                        val savedUriStr = prefs.getString("last_export_state_uri", null)
+                                        if (savedUriStr != null) {
+                                            val savedUri = android.net.Uri.parse(savedUriStr)
+                                            try {
+                                                val formatter = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+                                                val timestamp = formatter.format(java.util.Date())
+                                                val docId = android.provider.DocumentsContract.getTreeDocumentId(savedUri)
+                                                val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(savedUri, docId)
+                                                val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/json", "rethink_state_${timestamp}.json")
+                                                if (newFileUri != null) {
+                                                    exportStateToJson(newFileUri)
+                                                    Toast.makeText(this@CustomSettingsActivity, "Command executed: State exported", Toast.LENGTH_SHORT).show()
+                                                    success = true
+                                                } else {
+                                                    Toast.makeText(this@CustomSettingsActivity, "Command failed: Could not create file", Toast.LENGTH_LONG).show()
+                                                }
+                                            } catch (e: Exception) {
+                                                Toast.makeText(this@CustomSettingsActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                            }
+                                        } else {
+                                            Toast.makeText(this@CustomSettingsActivity, "No previously selected state export folder found", Toast.LENGTH_LONG).show()
+                                        }
+                                    } else if (command == "export" && data == "logs") {
+                                        val savedUriStr = prefs.getString("last_export_logs_uri", null)
+                                        if (savedUriStr != null) {
+                                            val savedUri = android.net.Uri.parse(savedUriStr)
+                                            try {
+                                                val formatter = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+                                                val timestamp = formatter.format(java.util.Date())
+                                                val docId = android.provider.DocumentsContract.getTreeDocumentId(savedUri)
+                                                val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(savedUri, docId)
+                                                val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/vnd.ms-excel", "rethink_logs_${timestamp}.xls")
+                                                if (newFileUri != null) {
+                                                    val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
+                                                    var fromTime: Long? = null
+                                                    if (cmdObj.has("from")) {
+                                                        fromTime = sdf.parse(cmdObj.getString("from"))?.time
+                                                    }
+                                                    var toTime: Long? = null
+                                                    if (cmdObj.has("to")) {
+                                                        toTime = sdf.parse(cmdObj.getString("to"))?.time
+                                                    }
+                                                    
+                                                    exportLogsToExcel(newFileUri, fromTime, toTime)
+                                                    Toast.makeText(this@CustomSettingsActivity, "Command executed: Logs exported", Toast.LENGTH_SHORT).show()
+                                                    success = true
+                                                } else {
+                                                    Toast.makeText(this@CustomSettingsActivity, "Command failed: Could not create logs file", Toast.LENGTH_LONG).show()
+                                                }
+                                            } catch (e: Exception) {
+                                                Toast.makeText(this@CustomSettingsActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                            }
+                                        } else {
+                                            Toast.makeText(this@CustomSettingsActivity, "No previously selected logs export folder found", Toast.LENGTH_LONG).show()
+                                        }
+                                    } else {
+                                        // Ignore unknown commands
+                                        success = true
+                                    }
+
                                     if (!success) {
-                                        android.util.Log.e("CustomSettings", "Command sequence aborted at $key")
-                                        Toast.makeText(this@CustomSettingsActivity, "Command sequence aborted at: $key", Toast.LENGTH_SHORT).show()
+                                        android.util.Log.e("CustomSettings", "Command sequence aborted at $command $data")
+                                        Toast.makeText(this@CustomSettingsActivity, "Command sequence aborted at: $command $data", Toast.LENGTH_SHORT).show()
                                         break
                                     }
                                 }
