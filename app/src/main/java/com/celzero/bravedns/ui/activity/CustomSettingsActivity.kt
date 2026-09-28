@@ -28,7 +28,8 @@ import java.io.OutputStreamWriter
 import java.io.InputStreamReader
 import android.content.res.Configuration
 
-import java.io.BufferedWriter
+import org.apache.poi.ss.usermodel.*
+import org.apache.poi.hssf.usermodel.HSSFWorkbook
 import java.util.Date
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -78,8 +79,8 @@ class CustomSettingsActivity : BaseActivity() {
             b.acsExportExcelCard.setOnClickListener {
                 val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "text/csv"
-                    putExtra(Intent.EXTRA_TITLE, "rethink_logs.csv")
+                    type = "application/vnd.ms-excel"
+                    putExtra(Intent.EXTRA_TITLE, "rethink_logs.xls")
                 }
                 exportExcelLauncher.launch(intent)
             }
@@ -181,20 +182,22 @@ class CustomSettingsActivity : BaseActivity() {
                 result.data?.data?.let { uri ->
                     lifecycleScope.launch {
                         try {
-                            Toast.makeText(this@CustomSettingsActivity, "Exporting logs to CSV...", Toast.LENGTH_SHORT).show()
-                            exportLogsToCsv(uri)
+                            Toast.makeText(this@CustomSettingsActivity, "Exporting logs to Excel...", Toast.LENGTH_SHORT).show()
+                            exportLogsToExcel(uri)
                             Toast.makeText(this@CustomSettingsActivity, "Logs exported successfully", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            android.util.Log.e("CustomSettings", "Error exporting CSV", e)
-                            Toast.makeText(this@CustomSettingsActivity, "Error exporting CSV: ${e.message}", Toast.LENGTH_LONG).show()
+                        } catch (e: Throwable) {
+                            android.util.Log.e("CustomSettings", "Error exporting Excel", e)
+                            Toast.makeText(this@CustomSettingsActivity, "Error exporting Excel: ${e.message}", Toast.LENGTH_LONG).show()
                         }
                     }
                 }
             }
         }
 
-    private suspend fun exportLogsToCsv(uri: android.net.Uri) = withContext(Dispatchers.IO) {
+    private suspend fun exportLogsToExcel(uri: android.net.Uri) = withContext(Dispatchers.IO) {
         val logs = connectionTrackerRepository.getAllLogs()
+        val workbook = HSSFWorkbook()
+        val sheet = workbook.createSheet("Network Logs")
 
         val headers = arrayOf(
             "Time", "App Name", "Package", "IP Address", "Port",
@@ -202,46 +205,34 @@ class CustomSettingsActivity : BaseActivity() {
             "Flag", "Message", "Download (B)", "Upload (B)"
         )
 
+        val headerRow = sheet.createRow(0)
+        for ((index, header) in headers.withIndex()) {
+            headerRow.createCell(index).setCellValue(header)
+        }
+
         val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
-        contentResolver.openOutputStream(uri)?.use { outputStream ->
-            BufferedWriter(OutputStreamWriter(outputStream)).use { writer ->
-                // Write headers
-                writer.write(headers.joinToString(","))
-                writer.newLine()
-
-                // Write rows
-                for (log in logs) {
-                    val row = arrayOf(
-                        dateFormat.format(Date(log.timeStamp)),
-                        log.appName ?: "",
-                        log.packageName ?: "",
-                        log.ipAddress ?: "",
-                        log.port.toString(),
-                        if (log.protocol == 1) "UDP" else if (log.protocol == 2) "TCP" else "OTHER",
-                        if (log.isBlocked) "Yes" else "No",
-                        log.blockedByRule ?: "",
-                        log.dnsQuery ?: "",
-                        log.flag ?: "",
-                        log.message ?: "",
-                        log.downloadBytes.toString(),
-                        log.uploadBytes.toString()
-                    )
-                    
-                    // Escape CSV fields
-                    val escapedRow = row.map { field ->
-                        var escaped = field.replace("\"", "\"\"")
-                        if (escaped.contains(",") || escaped.contains("\"") || escaped.contains("\n")) {
-                            escaped = "\"$escaped\""
-                        }
-                        escaped
-                    }
-                    
-                    writer.write(escapedRow.joinToString(","))
-                    writer.newLine()
-                }
-            }
+        for ((rowIndex, log) in logs.withIndex()) {
+            val row = sheet.createRow(rowIndex + 1)
+            row.createCell(0).setCellValue(dateFormat.format(Date(log.timeStamp)))
+            row.createCell(1).setCellValue(log.appName ?: "")
+            row.createCell(2).setCellValue(log.packageName ?: "")
+            row.createCell(3).setCellValue(log.ipAddress ?: "")
+            row.createCell(4).setCellValue(log.port.toString())
+            row.createCell(5).setCellValue(if (log.protocol == 1) "UDP" else if (log.protocol == 2) "TCP" else "OTHER")
+            row.createCell(6).setCellValue(if (log.isBlocked) "Yes" else "No")
+            row.createCell(7).setCellValue(log.blockedByRule ?: "")
+            row.createCell(8).setCellValue(log.dnsQuery ?: "") // dnsQuery stores the Target IP or Domain
+            row.createCell(9).setCellValue(log.flag ?: "")
+            row.createCell(10).setCellValue(log.message ?: "")
+            row.createCell(11).setCellValue(log.downloadBytes.toString())
+            row.createCell(12).setCellValue(log.uploadBytes.toString())
         }
+
+        contentResolver.openOutputStream(uri)?.use { outputStream ->
+            workbook.write(outputStream)
+        }
+        workbook.close()
     }
 
     private val openDocumentLauncher =
