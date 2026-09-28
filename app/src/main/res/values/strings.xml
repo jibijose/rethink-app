@@ -2991,4 +2991,9 @@
     <string name="dolphin_quote_lost_we_meant_it" translatable="false">Lost? We meant to do that.</string>
     <string name="dolphin_quote_nothing_suspicious" translatable="false">Nothing suspicious. Just swimming.</string>
 
+    <string name="lbl_custom_settings" translatable="false">Custom settings</string>
+    <string name="fs_configure_custom_settings_desc" translatable="false">App lock and state export</string>
+    <string name="lbl_export_state" translatable="false">Export State to JSON</string>
+    <string name="lbl_export_state_desc" translatable="false">Save current rethink start/stop state to a JSON file</string>
+
 </resources>

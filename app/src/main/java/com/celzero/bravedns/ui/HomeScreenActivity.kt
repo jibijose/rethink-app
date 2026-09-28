@@ -194,7 +194,9 @@ class HomeScreenActivity : BaseActivity(R.layout.activity_home_screen) {
         // notices, etc.).  This is a no-op on non-Play flavors.
         inAppMessageProvider.showMessages(this)
 
-        if (!isPinUnlocked) {
+        val prefs = getSharedPreferences("RethinkPinLock", Context.MODE_PRIVATE)
+        val isPinEnabled = prefs.getBoolean("ENABLE_PIN", true)
+        if (isPinEnabled && !isPinUnlocked) {
             showPinDialog()
         }
     }

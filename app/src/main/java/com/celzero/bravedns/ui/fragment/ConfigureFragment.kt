@@ -33,6 +33,7 @@ import com.celzero.bravedns.ui.activity.MiscSettingsActivity
 import com.celzero.bravedns.ui.activity.NetworkLogsActivity
 import com.celzero.bravedns.ui.activity.ProxySettingsActivity
 import com.celzero.bravedns.ui.activity.TunnelSettingsActivity
+import com.celzero.bravedns.ui.activity.CustomSettingsActivity
 import com.celzero.bravedns.util.Utilities
 
 class ConfigureFragment : Fragment(R.layout.fragment_configure) {
@@ -127,6 +128,15 @@ class ConfigureFragment : Fragment(R.layout.fragment_configure) {
         b.fsAdvancedCard.setOnClickListener {
             // open developer options configuration
             startActivity(ScreenType.ADVANCED)
+        }
+
+        b.fsCustomSettingsCard.setOnClickListener {
+            try {
+                startActivity(Intent(requireContext(), CustomSettingsActivity::class.java))
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(requireContext(), "Error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                android.util.Log.e("ConfigureFragment", "Error launching CustomSettingsActivity", e)
+            }
         }
     }
 

@@ -100,5 +100,8 @@
             </intent-filter>
         </receiver>
 
+        <activity android:name=".ui.activity.CustomSettingsActivity"
+            android:exported="false"
+            android:label="@string/lbl_custom_settings"/>
     </application>
 </manifest>
