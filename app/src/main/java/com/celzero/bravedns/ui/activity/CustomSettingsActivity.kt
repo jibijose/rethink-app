@@ -62,15 +62,12 @@ class CustomSettingsActivity : BaseActivity() {
             val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
 
             b.acsExportStateCard.setOnClickListener {
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "application/json"
-                    putExtra(Intent.EXTRA_TITLE, "rethink_state.json")
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                     prefs.getString("last_export_state_uri", null)?.let { uriStr ->
                         putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.net.Uri.parse(uriStr))
                     }
                 }
-                createDocumentLauncher.launch(intent)
+                openDocumentTreeLauncher.launch(intent)
             }
 
             b.acsImportStateCard.setOnClickListener {
@@ -100,15 +97,12 @@ class CustomSettingsActivity : BaseActivity() {
             }
 
             b.acsExportExcelCard.setOnClickListener {
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "application/vnd.ms-excel"
-                    putExtra(Intent.EXTRA_TITLE, "rethink_logs.xls")
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                     prefs.getString("last_export_logs_uri", null)?.let { uriStr ->
                         putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.net.Uri.parse(uriStr))
                     }
                 }
-                exportExcelLauncher.launch(intent)
+                openExcelTreeLauncher.launch(intent)
             }
         } catch (e: Exception) {
             android.util.Log.e("CustomSettings", "Crash in onCreate", e)
@@ -117,7 +111,7 @@ class CustomSettingsActivity : BaseActivity() {
         }
     }
 
-    private val createDocumentLauncher =
+    private val openDocumentTreeLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
@@ -126,13 +120,22 @@ class CustomSettingsActivity : BaseActivity() {
                         val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
                         prefs.edit().putString("last_export_state_uri", uri.toString()).apply()
                     } catch (e: Exception) {
-                        android.util.Log.e("CustomSettings", "Failed to take persistable URI permission for export", e)
+                        android.util.Log.e("CustomSettings", "Failed to take persistable URI permission for tree", e)
                     }
                     
                     lifecycleScope.launch {
                         try {
-                            exportStateToJson(uri)
-                            Toast.makeText(this@CustomSettingsActivity, "State exported successfully", Toast.LENGTH_SHORT).show()
+                            val formatter = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+                            val timestamp = formatter.format(java.util.Date())
+                            val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+                            val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(uri, docId)
+                            val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/json", "rethink_state_${timestamp}.json")
+                            if (newFileUri != null) {
+                                exportStateToJson(newFileUri)
+                                Toast.makeText(this@CustomSettingsActivity, "State exported to folder successfully", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(this@CustomSettingsActivity, "Could not create file in folder", Toast.LENGTH_SHORT).show()
+                            }
                         } catch (e: Exception) {
                             Toast.makeText(this@CustomSettingsActivity, "Error exporting state", Toast.LENGTH_SHORT).show()
                         }
@@ -206,7 +209,7 @@ class CustomSettingsActivity : BaseActivity() {
         json.put("perapp", perappParent)
 
         withContext(Dispatchers.IO) {
-            contentResolver.openOutputStream(uri, "wt")?.use { outputStream ->
+            contentResolver.openOutputStream(uri)?.use { outputStream ->
                 OutputStreamWriter(outputStream).use { writer ->
                     writer.write(json.toString(2))
                 }
@@ -214,7 +217,7 @@ class CustomSettingsActivity : BaseActivity() {
         }
     }
 
-    private val exportExcelLauncher =
+    private val openExcelTreeLauncher =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == android.app.Activity.RESULT_OK) {
                 result.data?.data?.let { uri ->
@@ -228,9 +231,18 @@ class CustomSettingsActivity : BaseActivity() {
 
                     lifecycleScope.launch {
                         try {
-                            Toast.makeText(this@CustomSettingsActivity, "Exporting logs to Excel...", Toast.LENGTH_SHORT).show()
-                            exportLogsToExcel(uri)
-                            Toast.makeText(this@CustomSettingsActivity, "Logs exported successfully", Toast.LENGTH_SHORT).show()
+                            val formatter = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+                            val timestamp = formatter.format(java.util.Date())
+                            val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
+                            val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(uri, docId)
+                            val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/vnd.ms-excel", "rethink_logs_${timestamp}.xls")
+                            if (newFileUri != null) {
+                                Toast.makeText(this@CustomSettingsActivity, "Exporting logs to Excel...", Toast.LENGTH_SHORT).show()
+                                exportLogsToExcel(newFileUri)
+                                Toast.makeText(this@CustomSettingsActivity, "Logs exported to folder successfully", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(this@CustomSettingsActivity, "Could not create file in folder", Toast.LENGTH_SHORT).show()
+                            }
                         } catch (e: Throwable) {
                             android.util.Log.e("CustomSettings", "Error exporting Excel", e)
                             Toast.makeText(this@CustomSettingsActivity, "Error exporting Excel: ${e.message}", Toast.LENGTH_LONG).show()
@@ -385,10 +397,47 @@ class CustomSettingsActivity : BaseActivity() {
                                     val savedUriStr = prefs.getString("last_export_state_uri", null)
                                     if (savedUriStr != null) {
                                         val savedUri = android.net.Uri.parse(savedUriStr)
-                                        exportStateToJson(savedUri)
-                                        Toast.makeText(this@CustomSettingsActivity, "Command executed: State exported", Toast.LENGTH_SHORT).show()
+                                        try {
+                                            val formatter = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+                                            val timestamp = formatter.format(java.util.Date())
+                                            val docId = android.provider.DocumentsContract.getTreeDocumentId(savedUri)
+                                            val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(savedUri, docId)
+                                            val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/json", "rethink_state_${timestamp}.json")
+                                            if (newFileUri != null) {
+                                                exportStateToJson(newFileUri)
+                                                Toast.makeText(this@CustomSettingsActivity, "Command executed: State exported to new file", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(this@CustomSettingsActivity, "Command failed: Could not create new file in folder", Toast.LENGTH_LONG).show()
+                                            }
+                                        } catch (e: Exception) {
+                                            Toast.makeText(this@CustomSettingsActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                        }
                                     } else {
-                                        Toast.makeText(this@CustomSettingsActivity, "No previously selected state export file found", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(this@CustomSettingsActivity, "No previously selected state export folder found", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                                
+                                if (commandJson.optBoolean("export_logs", false)) {
+                                    val savedUriStr = prefs.getString("last_export_logs_uri", null)
+                                    if (savedUriStr != null) {
+                                        val savedUri = android.net.Uri.parse(savedUriStr)
+                                        try {
+                                            val formatter = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+                                            val timestamp = formatter.format(java.util.Date())
+                                            val docId = android.provider.DocumentsContract.getTreeDocumentId(savedUri)
+                                            val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(savedUri, docId)
+                                            val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/vnd.ms-excel", "rethink_logs_${timestamp}.xls")
+                                            if (newFileUri != null) {
+                                                exportLogsToExcel(newFileUri)
+                                                Toast.makeText(this@CustomSettingsActivity, "Command executed: Logs exported to new file", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(this@CustomSettingsActivity, "Command failed: Could not create new logs file in folder", Toast.LENGTH_LONG).show()
+                                            }
+                                        } catch (e: Exception) {
+                                            Toast.makeText(this@CustomSettingsActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    } else {
+                                        Toast.makeText(this@CustomSettingsActivity, "No previously selected logs export folder found", Toast.LENGTH_LONG).show()
                                     }
                                 }
                             }
