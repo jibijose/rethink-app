@@ -67,4 +67,35 @@
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/acs_import_state_card"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="4dp"
+        android:layout_marginTop="16dp"
+        app:cardCornerRadius="8dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/lbl_import_state"
+                android:textAppearance="?attr/textAppearanceTitleMedium"
+                android:textColor="?attr/colorOnSurface" />
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="@string/lbl_import_state_desc"
+                android:textAppearance="?attr/textAppearanceBodySmall"
+                android:textColor="?attr/primaryLightColorText" />
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
 </LinearLayout>
