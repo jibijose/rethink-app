@@ -12,8 +12,16 @@ import com.celzero.bravedns.ui.BaseActivity
 import com.celzero.bravedns.databinding.ActivityCustomSettingsBinding
 import com.celzero.bravedns.service.PersistentState
 import com.celzero.bravedns.service.VpnController
+import com.celzero.bravedns.database.AppInfoRepository
+import com.celzero.bravedns.database.CustomIpRepository
+import com.celzero.bravedns.database.CustomDomainRepository
 import com.celzero.bravedns.util.Themes
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.json.JSONArray
 import org.koin.android.ext.android.inject
 import java.io.OutputStreamWriter
 import android.content.res.Configuration
@@ -22,6 +30,9 @@ class CustomSettingsActivity : BaseActivity() {
 
     private lateinit var b: ActivityCustomSettingsBinding
     private val persistentState by inject<PersistentState>()
+    private val appInfoRepository by inject<AppInfoRepository>()
+    private val customIpRepository by inject<CustomIpRepository>()
+    private val customDomainRepository by inject<CustomDomainRepository>()
 
     private fun Context.isDarkThemeOn(): Boolean {
         return resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
@@ -64,12 +75,74 @@ class CustomSettingsActivity : BaseActivity() {
                         val json = JSONObject()
                         json.put("status", status)
 
-                        contentResolver.openOutputStream(uri)?.use { outputStream ->
-                            OutputStreamWriter(outputStream).use { writer ->
-                                writer.write(json.toString())
+                        val universal = JSONObject()
+                        universal.put("blockWhenDeviceLocked", persistentState.getBlockWhenDeviceLocked())
+                        universal.put("blockAppWhenBackground", persistentState.getBlockAppWhenBackground())
+                        universal.put("udpBlocked", persistentState.getUdpBlocked())
+                        universal.put("blockUnknownConnections", persistentState.getBlockUnknownConnections())
+                        universal.put("disallowDnsBypass", persistentState.getDisallowDnsBypass())
+                        universal.put("blockNewlyInstalledApp", persistentState.getBlockNewlyInstalledApp())
+                        universal.put("blockMeteredConnections", persistentState.getBlockMeteredConnections())
+
+                        json.put("universal", universal)
+
+                        lifecycleScope.launch {
+                            val ipportParent = JSONObject()
+                            val perappParent = JSONObject()
+
+                            val ipRules = withContext(Dispatchers.IO) { customIpRepository.getIpRules() }
+                            val universalIpportArray = JSONArray()
+                            val perappIpportArray = JSONArray()
+                            for (rule in ipRules) {
+                                val ruleJson = JSONObject()
+                                ruleJson.put("uid", rule.uid)
+                                ruleJson.put("ipAddress", rule.ipAddress)
+                                ruleJson.put("port", rule.port)
+                                ruleJson.put("protocol", rule.protocol)
+                                ruleJson.put("isActive", rule.isActive)
+                                ruleJson.put("status", rule.status)
+                                
+                                if (rule.uid == com.celzero.bravedns.util.Constants.UID_EVERYBODY) {
+                                    universalIpportArray.put(ruleJson)
+                                } else {
+                                    perappIpportArray.put(ruleJson)
+                                }
                             }
+                            ipportParent.put("ipport", universalIpportArray)
+                            perappParent.put("ipport", perappIpportArray)
+
+                            val domainRules = withContext(Dispatchers.IO) { customDomainRepository.getAllCustomDomains() }
+                            val universalDomainArray = JSONArray()
+                            val perappDomainArray = JSONArray()
+                            for (rule in domainRules) {
+                                val ruleJson = JSONObject()
+                                ruleJson.put("domain", rule.domain)
+                                ruleJson.put("uid", rule.uid)
+                                ruleJson.put("ips", rule.ips)
+                                ruleJson.put("status", rule.status)
+                                ruleJson.put("type", rule.type)
+                                
+                                if (rule.uid == com.celzero.bravedns.util.Constants.UID_EVERYBODY) {
+                                    universalDomainArray.put(ruleJson)
+                                } else {
+                                    perappDomainArray.put(ruleJson)
+                                }
+                            }
+                            ipportParent.put("domain", universalDomainArray)
+                            perappParent.put("domain", perappDomainArray)
+
+                            json.put("ipport", ipportParent)
+                            json.put("perapp", perappParent)
+
+                            withContext(Dispatchers.IO) {
+                                contentResolver.openOutputStream(uri)?.use { outputStream ->
+                                    OutputStreamWriter(outputStream).use { writer ->
+                                        writer.write(json.toString(2))
+                                    }
+                                }
+                            }
+                            Toast.makeText(this@CustomSettingsActivity, "State exported successfully", Toast.LENGTH_SHORT).show()
                         }
-                        Toast.makeText(this, "State exported successfully", Toast.LENGTH_SHORT).show()
                     } catch (e: Exception) {
                         Toast.makeText(this, "Error exporting state", Toast.LENGTH_SHORT).show()
                     }
