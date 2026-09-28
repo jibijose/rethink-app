@@ -122,6 +122,9 @@ interface ConnectionTrackerDAO {
         limit: Int
     ): List<ConnectionTracker>
 
+    @Query("select * from ConnectionTracker order by timeStamp asc")
+    suspend fun getAllLogs(): List<ConnectionTracker>
+
     @Query(
         "select coalesce(nullif(dnsQuery, ''), ipAddress) as label, count(id) as total, sum(case when isBlocked then 1 else 0 end) as blocked, max(timeStamp) as lastSeen, substr(max(printf('%016d', timeStamp) || flag), 17) as flag from ConnectionTracker where timeStamp >= :start and timeStamp < :end and uid = :uid group by label order by total desc limit :limit"
     )

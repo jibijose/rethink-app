@@ -659,4 +659,14 @@ dependencies {
     "playImplementation"(platform(libs.googleFirebaseFirebaseBom))
     "playImplementation"(libs.googleFirebaseFirebaseCrashlytics)
     "playImplementation"(libs.googleFirebaseFirebaseCrashlyticsNdk)
+
+    // Apache POI for Excel export
+    implementation("org.apache.poi:poi:3.17")
+    implementation("org.apache.poi:poi-ooxml:3.17") {
+        exclude(group = "stax", module = "stax-api")
+        exclude(group = "org.apache.xmlbeans", module = "xmlbeans")
+    }
+    implementation("org.apache.xmlbeans:xmlbeans:3.1.0") {
+        exclude(group = "stax", module = "stax-api")
+    }
 }

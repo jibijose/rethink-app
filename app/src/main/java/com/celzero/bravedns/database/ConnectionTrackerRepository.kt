@@ -28,6 +28,10 @@ class ConnectionTrackerRepository(private val connectionTrackerDAO: ConnectionTr
         connectionTrackerDAO.insert(connectionTracker)
     }
 
+    suspend fun getAllLogs(): List<ConnectionTracker> {
+        return connectionTrackerDAO.getAllLogs()
+    }
+
     suspend fun insertBatch(conns: List<ConnectionTracker>) {
         connectionTrackerDAO.insertBatch(conns)
     }
