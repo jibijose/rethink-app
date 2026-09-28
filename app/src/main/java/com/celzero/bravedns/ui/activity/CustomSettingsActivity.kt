@@ -15,6 +15,7 @@ import com.celzero.bravedns.service.VpnController
 import com.celzero.bravedns.database.AppInfoRepository
 import com.celzero.bravedns.database.CustomIpRepository
 import com.celzero.bravedns.database.CustomDomainRepository
+import com.celzero.bravedns.database.ConnectionTrackerRepository
 import com.celzero.bravedns.util.Themes
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +28,11 @@ import java.io.OutputStreamWriter
 import java.io.InputStreamReader
 import android.content.res.Configuration
 
+import java.io.BufferedWriter
+import java.util.Date
+import java.text.SimpleDateFormat
+import java.util.Locale
+
 class CustomSettingsActivity : BaseActivity() {
 
     private lateinit var b: ActivityCustomSettingsBinding
@@ -34,6 +40,7 @@ class CustomSettingsActivity : BaseActivity() {
     private val appInfoRepository by inject<AppInfoRepository>()
     private val customIpRepository by inject<CustomIpRepository>()
     private val customDomainRepository by inject<CustomDomainRepository>()
+    private val connectionTrackerRepository by inject<ConnectionTrackerRepository>()
 
     private fun Context.isDarkThemeOn(): Boolean {
         return resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
@@ -66,6 +73,15 @@ class CustomSettingsActivity : BaseActivity() {
                     type = "application/json"
                 }
                 openDocumentLauncher.launch(intent)
+            }
+
+            b.acsExportExcelCard.setOnClickListener {
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "text/csv"
+                    putExtra(Intent.EXTRA_TITLE, "rethink_logs.csv")
+                }
+                exportExcelLauncher.launch(intent)
             }
         } catch (e: Exception) {
             android.util.Log.e("CustomSettings", "Crash in onCreate", e)
@@ -158,6 +174,75 @@ class CustomSettingsActivity : BaseActivity() {
                 }
             }
         }
+
+    private val exportExcelLauncher =
+        registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == android.app.Activity.RESULT_OK) {
+                result.data?.data?.let { uri ->
+                    lifecycleScope.launch {
+                        try {
+                            Toast.makeText(this@CustomSettingsActivity, "Exporting logs to CSV...", Toast.LENGTH_SHORT).show()
+                            exportLogsToCsv(uri)
+                            Toast.makeText(this@CustomSettingsActivity, "Logs exported successfully", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            android.util.Log.e("CustomSettings", "Error exporting CSV", e)
+                            Toast.makeText(this@CustomSettingsActivity, "Error exporting CSV: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+        }
+
+    private suspend fun exportLogsToCsv(uri: android.net.Uri) = withContext(Dispatchers.IO) {
+        val logs = connectionTrackerRepository.getAllLogs()
+
+        val headers = arrayOf(
+            "Time", "App Name", "Package", "IP Address", "Port",
+            "Protocol", "Blocked?", "Blocked By", "Target IP",
+            "Flag", "Message", "Download (B)", "Upload (B)"
+        )
+
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+
+        contentResolver.openOutputStream(uri)?.use { outputStream ->
+            BufferedWriter(OutputStreamWriter(outputStream)).use { writer ->
+                // Write headers
+                writer.write(headers.joinToString(","))
+                writer.newLine()
+
+                // Write rows
+                for (log in logs) {
+                    val row = arrayOf(
+                        dateFormat.format(Date(log.timeStamp)),
+                        log.appName ?: "",
+                        log.packageName ?: "",
+                        log.ipAddress ?: "",
+                        log.port.toString(),
+                        if (log.protocol == 1) "UDP" else if (log.protocol == 2) "TCP" else "OTHER",
+                        if (log.isBlocked) "Yes" else "No",
+                        log.blockedByRule ?: "",
+                        log.dnsQuery ?: "",
+                        log.flag ?: "",
+                        log.message ?: "",
+                        log.downloadBytes.toString(),
+                        log.uploadBytes.toString()
+                    )
+                    
+                    // Escape CSV fields
+                    val escapedRow = row.map { field ->
+                        var escaped = field.replace("\"", "\"\"")
+                        if (escaped.contains(",") || escaped.contains("\"") || escaped.contains("\n")) {
+                            escaped = "\"$escaped\""
+                        }
+                        escaped
+                    }
+                    
+                    writer.write(escapedRow.joinToString(","))
+                    writer.newLine()
+                }
+            }
+        }
+    }
 
     private val openDocumentLauncher =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
