@@ -24,6 +24,7 @@ import org.json.JSONObject
 import org.json.JSONArray
 import org.koin.android.ext.android.inject
 import java.io.OutputStreamWriter
+import java.io.InputStreamReader
 import android.content.res.Configuration
 
 class CustomSettingsActivity : BaseActivity() {
@@ -57,6 +58,14 @@ class CustomSettingsActivity : BaseActivity() {
                     putExtra(Intent.EXTRA_TITLE, "rethink_state.json")
                 }
                 createDocumentLauncher.launch(intent)
+            }
+
+            b.acsImportStateCard.setOnClickListener {
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/json"
+                }
+                openDocumentLauncher.launch(intent)
             }
         } catch (e: Exception) {
             android.util.Log.e("CustomSettings", "Crash in onCreate", e)
@@ -149,6 +158,148 @@ class CustomSettingsActivity : BaseActivity() {
                 }
             }
         }
+
+    private val openDocumentLauncher =
+        registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == android.app.Activity.RESULT_OK) {
+                result.data?.data?.let { uri ->
+                    lifecycleScope.launch {
+                        try {
+                            val jsonString = withContext(Dispatchers.IO) {
+                                contentResolver.openInputStream(uri)?.use { inputStream ->
+                                    InputStreamReader(inputStream).readText()
+                                }
+                            }
+                            if (jsonString != null) {
+                                val json = JSONObject(jsonString)
+                                importStateFromJson(json)
+                                Toast.makeText(this@CustomSettingsActivity, "State imported successfully", Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("CustomSettings", "Error importing state", e)
+                            Toast.makeText(this@CustomSettingsActivity, "Error importing state: ${e.message}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+        }
+
+    private suspend fun importStateFromJson(json: JSONObject) = withContext(Dispatchers.IO) {
+        if (json.has("status")) {
+            val status = json.getString("status")
+            val vpnState = VpnController.state()
+            android.util.Log.i("CustomSettings", "Importing status: $status (current: ${vpnState.on})")
+            if (status == "started" && !vpnState.on) {
+                VpnController.start(this@CustomSettingsActivity)
+            } else if (status == "stopped" && vpnState.on) {
+                VpnController.stop("State imported from JSON", this@CustomSettingsActivity)
+            }
+        }
+
+        if (json.has("universal")) {
+            val universal = json.getJSONObject("universal")
+            android.util.Log.i("CustomSettings", "Importing universal rules")
+            if (universal.has("blockWhenDeviceLocked")) persistentState.setBlockWhenDeviceLocked(universal.getBoolean("blockWhenDeviceLocked"))
+            if (universal.has("blockAppWhenBackground")) persistentState.setBlockAppWhenBackground(universal.getBoolean("blockAppWhenBackground"))
+            if (universal.has("udpBlocked")) persistentState.setUdpBlocked(universal.getBoolean("udpBlocked"))
+            if (universal.has("blockUnknownConnections")) persistentState.setBlockUnknownConnections(universal.getBoolean("blockUnknownConnections"))
+            if (universal.has("disallowDnsBypass")) persistentState.setDisallowDnsBypass(universal.getBoolean("disallowDnsBypass"))
+            if (universal.has("blockNewlyInstalledApp")) persistentState.setBlockNewlyInstalledApp(universal.getBoolean("blockNewlyInstalledApp"))
+            if (universal.has("blockMeteredConnections")) persistentState.setBlockMeteredConnections(universal.getBoolean("blockMeteredConnections"))
+        }
+
+        if (json.has("ipport")) {
+            val ipportParent = json.getJSONObject("ipport")
+            if (ipportParent.has("ipport")) {
+                importCustomIps(ipportParent.getJSONArray("ipport"), true)
+            }
+            if (ipportParent.has("domain")) {
+                importCustomDomains(ipportParent.getJSONArray("domain"), true)
+            }
+        }
+
+        if (json.has("perapp")) {
+            val perappParent = json.getJSONObject("perapp")
+            if (perappParent.has("ipport")) {
+                importCustomIps(perappParent.getJSONArray("ipport"), false)
+            }
+            if (perappParent.has("domain")) {
+                importCustomDomains(perappParent.getJSONArray("domain"), false)
+            }
+        }
+    }
+
+    private suspend fun importCustomIps(array: JSONArray, isUniversal: Boolean) {
+        val currentRules = customIpRepository.getIpRules().filter { 
+            if (isUniversal) it.uid == com.celzero.bravedns.util.Constants.UID_EVERYBODY else it.uid != com.celzero.bravedns.util.Constants.UID_EVERYBODY 
+        }
+        android.util.Log.i("CustomSettings", "Importing ${array.length()} CustomIp rules (Universal: $isUniversal)")
+        
+        for (i in 0 until array.length()) {
+            val ruleJson = array.getJSONObject(i)
+            val ipAddress = ruleJson.getString("ipAddress")
+            val port = ruleJson.getInt("port")
+            val uid = ruleJson.getInt("uid")
+            val protocol = ruleJson.getString("protocol")
+            val isActive = ruleJson.getBoolean("isActive")
+            val status = ruleJson.getInt("status")
+            
+            val existing = currentRules.find { it.ipAddress == ipAddress && it.port == port && it.uid == uid && it.protocol == protocol }
+            if (existing == null) {
+                val newRule = com.celzero.bravedns.database.CustomIp()
+                newRule.uid = uid
+                newRule.ipAddress = ipAddress
+                newRule.port = port
+                newRule.protocol = protocol
+                newRule.isActive = isActive
+                newRule.status = status
+                customIpRepository.insert(newRule)
+                android.util.Log.i("CustomSettings", "Inserted CustomIp: $ipAddress:$port (uid: $uid)")
+            } else if (existing.isActive != isActive || existing.status != status) {
+                existing.isActive = isActive
+                existing.status = status
+                customIpRepository.update(existing)
+                android.util.Log.i("CustomSettings", "Updated CustomIp: $ipAddress:$port (uid: $uid)")
+            }
+        }
+    }
+
+    private suspend fun importCustomDomains(array: JSONArray, isUniversal: Boolean) {
+        val currentRules = customDomainRepository.getAllCustomDomains().filter { 
+            if (isUniversal) it.uid == com.celzero.bravedns.util.Constants.UID_EVERYBODY else it.uid != com.celzero.bravedns.util.Constants.UID_EVERYBODY 
+        }
+        android.util.Log.i("CustomSettings", "Importing ${array.length()} CustomDomain rules (Universal: $isUniversal)")
+        
+        for (i in 0 until array.length()) {
+            val ruleJson = array.getJSONObject(i)
+            val domain = ruleJson.getString("domain")
+            val uid = ruleJson.getInt("uid")
+            val status = ruleJson.getInt("status")
+            val type = ruleJson.getInt("type")
+            val ips = ruleJson.optString("ips", "")
+            
+            val existing = currentRules.find { it.domain == domain && it.uid == uid }
+            if (existing == null) {
+                val newRule = com.celzero.bravedns.database.CustomDomain(null)
+                newRule.domain = domain
+                newRule.uid = uid
+                newRule.status = status
+                newRule.type = type
+                newRule.ips = ips
+                customDomainRepository.insert(newRule)
+                android.util.Log.i("CustomSettings", "Inserted CustomDomain: $domain (uid: $uid)")
+            } else if (existing.status != status || existing.type != type || existing.ips != ips) {
+                val newRule = com.celzero.bravedns.database.CustomDomain(null)
+                newRule.domain = domain
+                newRule.uid = uid
+                newRule.status = status
+                newRule.type = type
+                newRule.ips = ips
+                customDomainRepository.update(existing, newRule)
+                android.util.Log.i("CustomSettings", "Updated CustomDomain: $domain (uid: $uid)")
+            }
+        }
+    }
 
     private fun showAppLockOptionsDialog() {
         val prefs = getSharedPreferences("RethinkPinLock", Context.MODE_PRIVATE)
