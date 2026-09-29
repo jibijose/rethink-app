@@ -21,6 +21,9 @@ import com.celzero.bravedns.ui.BaseActivity
 import com.celzero.bravedns.util.Themes
 import com.google.android.material.appbar.MaterialToolbar
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+import android.content.res.Configuration
+import org.koin.android.ext.android.inject
+import com.celzero.bravedns.service.PersistentState
 import org.json.JSONObject
 
 class AuthorizedFilesActivity : BaseActivity() {
@@ -28,6 +31,12 @@ class AuthorizedFilesActivity : BaseActivity() {
     private lateinit var recyclerView: RecyclerView
     private lateinit var adapter: AuthorizedFilesAdapter
     private var authorizedFiles = mutableMapOf<String, String>()
+    private val persistentState by inject<PersistentState>()
+
+    private fun Context.isDarkThemeOn(): Boolean {
+        return resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+                Configuration.UI_MODE_NIGHT_YES
+    }
 
     private val addFileLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
@@ -54,6 +63,7 @@ class AuthorizedFilesActivity : BaseActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        theme.applyStyle(Themes.getCurrentTheme(isDarkThemeOn(), persistentState.theme), true)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_authorized_files)
 
@@ -114,7 +124,7 @@ class AuthorizedFilesActivity : BaseActivity() {
             try {
                 contentResolver.releasePersistableUriPermission(
                     Uri.parse(uriString), 
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
             } catch (e: SecurityException) {
                 // Ignore if permission was already lost
