@@ -81,6 +81,16 @@
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/acs_setup_automation"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:layout_marginHorizontal="4dp"
+        android:text="Automation Setup"
+        app:backgroundTint="#E3F2FD"
+        android:textColor="#0D47A1" />
+
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -135,34 +145,6 @@
             android:text="Import State"
             app:backgroundTint="#FFEBEE"
             android:textColor="#B71C1C" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:layout_marginHorizontal="4dp"
-        android:orientation="horizontal">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/acs_setup_auto_stats_card"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="4dp"
-            android:text="Auto Cmds"
-            app:backgroundTint="#E3F2FD"
-            android:textColor="#0D47A1" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/acs_setup_auto_state_card"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="4dp"
-            android:text="Auto State"
-            app:backgroundTint="#E3F2FD"
-            android:textColor="#0D47A1" />
     </LinearLayout>
 
 </LinearLayout>

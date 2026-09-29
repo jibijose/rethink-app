@@ -106,22 +106,8 @@ class CustomSettingsActivity : BaseActivity() {
                 manualExportStatsLauncher.launch(intent)
             }
 
-            b.acsSetupAutoStateCard.setOnClickListener {
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "application/json"
-                    putExtra(Intent.EXTRA_TITLE, "rethink_automated_state.json")
-                }
-                setupAutoStateLauncher.launch(intent)
-            }
-
-            b.acsSetupAutoStatsCard.setOnClickListener {
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "application/vnd.ms-excel"
-                    putExtra(Intent.EXTRA_TITLE, "rethink_automated_stats.xls")
-                }
-                setupAutoStatsLauncher.launch(intent)
+            b.acsSetupAutomation.setOnClickListener {
+                startActivity(Intent(this, AuthorizedFilesActivity::class.java))
             }
         } catch (e: Exception) {
             android.util.Log.e("CustomSettings", "Crash in onCreate", e)
