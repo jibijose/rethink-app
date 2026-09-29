@@ -95,7 +95,7 @@ class CustomSettingsActivity : BaseActivity() {
 
             b.acsExportExcelCard.setOnClickListener {
                 val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                    prefs.getString("last_export_logs_uri", null)?.let { uriStr ->
+                    prefs.getString("last_export_stats_uri", null)?.let { uriStr ->
                         putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, android.net.Uri.parse(uriStr))
                     }
                 }
@@ -221,9 +221,9 @@ class CustomSettingsActivity : BaseActivity() {
                     try {
                         contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
-                        prefs.edit().putString("last_export_logs_uri", uri.toString()).apply()
+                        prefs.edit().putString("last_export_stats_uri", uri.toString()).apply()
                     } catch (e: Exception) {
-                        android.util.Log.e("CustomSettings", "Failed to take persistable URI permission for logs", e)
+                        android.util.Log.e("CustomSettings", "Failed to take persistable URI permission for stats", e)
                     }
 
                     lifecycleScope.launch {
@@ -232,11 +232,11 @@ class CustomSettingsActivity : BaseActivity() {
                             val timestamp = formatter.format(java.util.Date())
                             val docId = android.provider.DocumentsContract.getTreeDocumentId(uri)
                             val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(uri, docId)
-                            val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/vnd.ms-excel", "rethink_logs_${timestamp}.xls")
+                            val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/vnd.ms-excel", "rethink_stats_${timestamp}.xls")
                             if (newFileUri != null) {
-                                Toast.makeText(this@CustomSettingsActivity, "Exporting logs to Excel...", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(this@CustomSettingsActivity, "Exporting stats to Excel...", Toast.LENGTH_SHORT).show()
                                 exportLogsToExcel(newFileUri)
-                                Toast.makeText(this@CustomSettingsActivity, "Logs exported to folder successfully", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(this@CustomSettingsActivity, "Stats exported to folder successfully", Toast.LENGTH_SHORT).show()
                             } else {
                                 Toast.makeText(this@CustomSettingsActivity, "Could not create file in folder", Toast.LENGTH_SHORT).show()
                             }
@@ -498,8 +498,8 @@ class CustomSettingsActivity : BaseActivity() {
                                         } else {
                                             Toast.makeText(this@CustomSettingsActivity, "No previously selected state export folder found", Toast.LENGTH_LONG).show()
                                         }
-                                    } else if (command == "export" && data == "logs") {
-                                        val savedUriStr = prefs.getString("last_export_logs_uri", null)
+                                    } else if (command == "export" && data == "stats") {
+                                        val savedUriStr = prefs.getString("last_export_stats_uri", null)
                                         if (savedUriStr != null) {
                                             val savedUri = android.net.Uri.parse(savedUriStr)
                                             try {
@@ -507,7 +507,7 @@ class CustomSettingsActivity : BaseActivity() {
                                                 val timestamp = formatter.format(java.util.Date())
                                                 val docId = android.provider.DocumentsContract.getTreeDocumentId(savedUri)
                                                 val dirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(savedUri, docId)
-                                                val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/vnd.ms-excel", "rethink_logs_${timestamp}.xls")
+                                                val newFileUri = android.provider.DocumentsContract.createDocument(contentResolver, dirUri, "application/vnd.ms-excel", "rethink_stats_${timestamp}.xls")
                                                 if (newFileUri != null) {
                                                     val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
                                                     var fromTime: Long? = null
@@ -520,16 +520,16 @@ class CustomSettingsActivity : BaseActivity() {
                                                     }
                                                     
                                                     exportLogsToExcel(newFileUri, fromTime, toTime)
-                                                    Toast.makeText(this@CustomSettingsActivity, "Command executed: Logs exported", Toast.LENGTH_SHORT).show()
+                                                    Toast.makeText(this@CustomSettingsActivity, "Command executed: Stats exported", Toast.LENGTH_SHORT).show()
                                                     success = true
                                                 } else {
-                                                    Toast.makeText(this@CustomSettingsActivity, "Command failed: Could not create logs file", Toast.LENGTH_LONG).show()
+                                                    Toast.makeText(this@CustomSettingsActivity, "Command failed: Could not create stats file", Toast.LENGTH_LONG).show()
                                                 }
                                             } catch (e: Exception) {
                                                 Toast.makeText(this@CustomSettingsActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
                                             }
                                         } else {
-                                            Toast.makeText(this@CustomSettingsActivity, "No previously selected logs export folder found", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(this@CustomSettingsActivity, "No previously selected stats export folder found", Toast.LENGTH_LONG).show()
                                         }
                                     } else {
                                         // Ignore unknown commands

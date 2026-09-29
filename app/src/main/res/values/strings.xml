@@ -2999,7 +2999,7 @@
     <string name="lbl_import_state_desc" translatable="false">Load rethink start/stop state and firewall rules from a JSON file</string>
     <string name="lbl_import_commands" translatable="false">Import Commands from JSON</string>
     <string name="lbl_import_commands_desc" translatable="false">Load commands from rethink_command.json to automate tasks</string>
-    <string name="lbl_export_excel" translatable="false">Export Logs to XLS</string>
-    <string name="lbl_export_excel_desc" translatable="false">Export all network logs to rethink_logs.xls</string>
+    <string name="lbl_export_excel" translatable="false">Export Stats to XLS</string>
+    <string name="lbl_export_excel_desc" translatable="false">Export all network stats to rethink_stats.xls</string>
 
 </resources>
