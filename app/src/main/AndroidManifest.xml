@@ -103,5 +103,8 @@
         <activity android:name=".ui.activity.CustomSettingsActivity"
             android:exported="false"
             android:label="@string/lbl_custom_settings"/>
+        <activity android:name=".ui.activity.AuthorizedFilesActivity"
+            android:exported="false"
+            android:label="Authorized Files"/>
     </application>
 </manifest>
