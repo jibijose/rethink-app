@@ -54,6 +54,7 @@ class AuthorizedFilesActivity : BaseActivity() {
                     saveAuthorizedFiles()
                     
                     adapter.updateData(authorizedFiles)
+                    updateToolbarSubtitle()
                     Toast.makeText(this@AuthorizedFilesActivity, "Authorized: $fileName", Toast.LENGTH_SHORT).show()
                 } catch (e: SecurityException) {
                     Toast.makeText(this@AuthorizedFilesActivity, "Failed to authorize file", Toast.LENGTH_SHORT).show()
@@ -83,6 +84,7 @@ class AuthorizedFilesActivity : BaseActivity() {
             removeFile(fileName)
         }
         recyclerView.adapter = adapter
+        updateToolbarSubtitle()
 
         findViewById<ExtendedFloatingActionButton>(R.id.btn_add_file).setOnClickListener {
             val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -132,6 +134,12 @@ class AuthorizedFilesActivity : BaseActivity() {
         }
         saveAuthorizedFiles()
         adapter.updateData(authorizedFiles)
+        updateToolbarSubtitle()
+    }
+
+    private fun updateToolbarSubtitle() {
+        val count = authorizedFiles.size
+        supportActionBar?.subtitle = "$count out of 4 files authorized"
     }
 
     private fun getFileName(uri: Uri): String? {

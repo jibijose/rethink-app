@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import android.graphics.Color
 import com.celzero.bravedns.R
 import com.celzero.bravedns.ui.BaseActivity
 import com.celzero.bravedns.databinding.ActivityCustomSettingsBinding
@@ -17,6 +19,10 @@ import com.celzero.bravedns.database.CustomIpRepository
 import com.celzero.bravedns.database.CustomDomainRepository
 import com.celzero.bravedns.database.ConnectionTrackerRepository
 import com.celzero.bravedns.util.Themes
+import com.celzero.bravedns.util.Logger
+import com.celzero.bravedns.util.Logger.LOG_TAG_UI
+import com.celzero.bravedns.service.DomainRulesManager
+import com.celzero.bravedns.service.IpRulesManager
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -109,11 +115,22 @@ class CustomSettingsActivity : BaseActivity() {
             b.acsSetupAutomation.setOnClickListener {
                 startActivity(Intent(this, AuthorizedFilesActivity::class.java))
             }
+
+            b.acsAutomationToggleCard.setOnClickListener {
+                b.acsAutomationSwitch.isChecked = !b.acsAutomationSwitch.isChecked
+            }
+
+            updateAutomationUi()
         } catch (e: Exception) {
             android.util.Log.e("CustomSettings", "Crash in onCreate", e)
             Toast.makeText(this, "Crash: ${e.message}", Toast.LENGTH_LONG).show()
             finish()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateAutomationUi()
     }
 
     private val manualExportStateLauncher =
@@ -214,8 +231,8 @@ class CustomSettingsActivity : BaseActivity() {
                             Toast.makeText(this@CustomSettingsActivity, "Exporting stats to Excel...", Toast.LENGTH_SHORT).show()
                             exportLogsToExcel(uri)
                             Toast.makeText(this@CustomSettingsActivity, "Stats exported successfully", Toast.LENGTH_SHORT).show()
-                        } catch (e: Throwable) {
-                            android.util.Log.e("CustomSettings", "Error exporting Excel", e)
+                        } catch (e: Exception) {
+                            Logger.e(LOG_TAG_UI, "Error exporting Excel: ${e.message}", e)
                             Toast.makeText(this@CustomSettingsActivity, "Error exporting Excel: ${e.message}", Toast.LENGTH_LONG).show()
                         }
                     }
@@ -310,7 +327,7 @@ class CustomSettingsActivity : BaseActivity() {
                         val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
                         prefs.edit().putString("last_import_state_uri", uri.toString()).apply()
                     } catch (e: Exception) {
-                        android.util.Log.e("CustomSettings", "Failed to take persistable URI permission", e)
+                        Logger.e(LOG_TAG_UI, "Failed to take persistable URI permission: ${e.message}", e)
                     }
 
                     lifecycleScope.launch {
@@ -320,14 +337,30 @@ class CustomSettingsActivity : BaseActivity() {
                                     InputStreamReader(inputStream).readText()
                                 }
                             }
-                            if (jsonString != null) {
-                                val json = JSONObject(jsonString)
+                            if (jsonString.isNullOrBlank()) {
+                                MaterialAlertDialogBuilder(this@CustomSettingsActivity, R.style.App_Dialog_NoDim)
+                                    .setTitle("Import State Failed")
+                                    .setMessage("Selected file is empty (0 bytes).")
+                                    .setPositiveButton("OK", null)
+                                    .show()
+                            } else {
+                                val cleanJson = if (jsonString.startsWith("\uFEFF")) jsonString.substring(1).trim() else jsonString.trim()
+                                val json = JSONObject(cleanJson)
                                 importStateFromJson(json)
+                                MaterialAlertDialogBuilder(this@CustomSettingsActivity, R.style.App_Dialog_NoDim)
+                                    .setTitle("Import State")
+                                    .setMessage("State imported successfully. Firewall & DNS rules reloaded.")
+                                    .setPositiveButton("OK", null)
+                                    .show()
                                 Toast.makeText(this@CustomSettingsActivity, "State imported successfully", Toast.LENGTH_SHORT).show()
                             }
                         } catch (e: Exception) {
-                            android.util.Log.e("CustomSettings", "Error importing state", e)
-                            Toast.makeText(this@CustomSettingsActivity, "Error importing state: ${e.message}", Toast.LENGTH_LONG).show()
+                            Logger.e(LOG_TAG_UI, "Error importing state: ${e.message}", e)
+                            MaterialAlertDialogBuilder(this@CustomSettingsActivity, R.style.App_Dialog_NoDim)
+                                .setTitle("Import State Failed")
+                                .setMessage("Error importing state: ${e.message}")
+                                .setPositiveButton("OK", null)
+                                .show()
                         }
                     }
                 }
@@ -343,7 +376,7 @@ class CustomSettingsActivity : BaseActivity() {
                         val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
                         prefs.edit().putString("last_import_commands_uri", uri.toString()).apply()
                     } catch (e: Exception) {
-                        android.util.Log.e("CustomSettings", "Failed to take persistable URI permission", e)
+                        Logger.e(LOG_TAG_UI, "Failed to take persistable URI permission: ${e.message}", e)
                     }
 
                     lifecycleScope.launch {
@@ -353,186 +386,288 @@ class CustomSettingsActivity : BaseActivity() {
                                     InputStreamReader(inputStream).readText()
                                 }
                             }
-                            if (jsonString != null) {
-                                val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
-                                val root = org.json.JSONTokener(jsonString).nextValue()
-                                val commandsArray = if (root is org.json.JSONArray) {
-                                    root
-                                } else if (root is JSONObject) {
-                                    root.optJSONArray("commands") ?: org.json.JSONArray()
-                                } else {
-                                    org.json.JSONArray()
+                            if (jsonString.isNullOrBlank()) {
+                                MaterialAlertDialogBuilder(this@CustomSettingsActivity, R.style.App_Dialog_NoDim)
+                                    .setTitle("Import Commands Failed")
+                                    .setMessage("Selected command file is empty (0 bytes).")
+                                    .setPositiveButton("OK", null)
+                                    .show()
+                                return@launch
+                            }
+
+                            val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
+                            val cleanJson = if (jsonString.startsWith("\uFEFF")) jsonString.substring(1).trim() else jsonString.trim()
+                            val root = org.json.JSONTokener(cleanJson).nextValue()
+                            val commandsArray = if (root is org.json.JSONArray) {
+                                root
+                            } else if (root is JSONObject) {
+                                root.optJSONArray("commands") ?: org.json.JSONArray()
+                            } else {
+                                org.json.JSONArray()
+                            }
+
+                            if (commandsArray.length() == 0) {
+                                MaterialAlertDialogBuilder(this@CustomSettingsActivity, R.style.App_Dialog_NoDim)
+                                    .setTitle("Import Commands")
+                                    .setMessage("No executable commands found in file. Ensure 'commands' array contains objects with '\"execute\": true'.")
+                                    .setPositiveButton("OK", null)
+                                    .show()
+                                return@launch
+                            }
+
+                            pendingCommandJobs.forEach { it.cancel() }
+                            pendingCommandJobs.clear()
+
+                            val executionResults = mutableListOf<String>()
+                            var anyCommandFailed = false
+
+                            for (i in 0 until commandsArray.length()) {
+                                val cmdObj = commandsArray.optJSONObject(i) ?: continue
+                                if (!cmdObj.optBoolean("execute", false)) {
+                                    continue
                                 }
-
-                                pendingCommandJobs.forEach { it.cancel() }
-                                pendingCommandJobs.clear()
-
-                                for (i in 0 until commandsArray.length()) {
-                                    val cmdObj = commandsArray.optJSONObject(i) ?: continue
-                                    if (!cmdObj.optBoolean("execute", false)) {
-                                        continue
+                                
+                                val command = cmdObj.optString("command").trim().lowercase()
+                                val data = cmdObj.optString("data").trim().lowercase()
+                                
+                                val executeAtStr = cmdObj.optString("executeAt", null)
+                                var delayMillis = 0L
+                                var isRecurring = false
+                                if (!executeAtStr.isNullOrEmpty()) {
+                                    try {
+                                        if (executeAtStr.length <= 5 && executeAtStr.contains(":")) {
+                                            val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                                            val parsedTime = sdf.parse(executeAtStr)
+                                            if (parsedTime != null) {
+                                                val now = java.util.Calendar.getInstance()
+                                                val target = java.util.Calendar.getInstance()
+                                                target.time = parsedTime
+                                                
+                                                val targetCal = java.util.Calendar.getInstance()
+                                                targetCal.set(java.util.Calendar.HOUR_OF_DAY, target.get(java.util.Calendar.HOUR_OF_DAY))
+                                                targetCal.set(java.util.Calendar.MINUTE, target.get(java.util.Calendar.MINUTE))
+                                                targetCal.set(java.util.Calendar.SECOND, 0)
+                                                targetCal.set(java.util.Calendar.MILLISECOND, 0)
+                                                
+                                                if (targetCal.before(now)) {
+                                                    targetCal.add(java.util.Calendar.DAY_OF_MONTH, 1)
+                                                }
+                                                delayMillis = targetCal.timeInMillis - now.timeInMillis
+                                                isRecurring = true
+                                            }
+                                        } else {
+                                            val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
+                                            val executeTime = sdf.parse(executeAtStr)?.time ?: 0L
+                                            val now = System.currentTimeMillis()
+                                            if (executeTime > now) {
+                                                delayMillis = executeTime - now
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        Logger.e(LOG_TAG_UI, "Invalid executeAt format: $executeAtStr", e)
                                     }
-                                    
-                                    val command = cmdObj.optString("command")
-                                    val data = cmdObj.optString("data")
-                                    
-                                    val executeAtStr = cmdObj.optString("executeAt", null)
-                                    var delayMillis = 0L
-                                    var isRecurring = false
-                                    if (!executeAtStr.isNullOrEmpty()) {
-                                        try {
-                                            if (executeAtStr.length <= 5 && executeAtStr.contains(":")) {
-                                                val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-                                                val parsedTime = sdf.parse(executeAtStr)
-                                                if (parsedTime != null) {
-                                                    val now = java.util.Calendar.getInstance()
-                                                    val target = java.util.Calendar.getInstance()
-                                                    target.time = parsedTime
-                                                    
-                                                    val targetCal = java.util.Calendar.getInstance()
-                                                    targetCal.set(java.util.Calendar.HOUR_OF_DAY, target.get(java.util.Calendar.HOUR_OF_DAY))
-                                                    targetCal.set(java.util.Calendar.MINUTE, target.get(java.util.Calendar.MINUTE))
-                                                    targetCal.set(java.util.Calendar.SECOND, 0)
-                                                    targetCal.set(java.util.Calendar.MILLISECOND, 0)
-                                                    
-                                                    if (targetCal.before(now)) {
-                                                        targetCal.add(java.util.Calendar.DAY_OF_MONTH, 1)
+                                }
+                                
+                                val task: suspend () -> Boolean = {
+                                    var success = false
+                                    when {
+                                        command == "import" && data == "state" -> {
+                                            // 1. Try rethink_state.json first
+                                            var targetUri = getAuthorizedFileUri("rethink_state.json", "state.json")
+                                            var stateJsonString: String? = null
+                                            if (targetUri != null) {
+                                                stateJsonString = withContext(Dispatchers.IO) {
+                                                    try {
+                                                        contentResolver.openInputStream(targetUri)?.use { inputStream ->
+                                                            InputStreamReader(inputStream).readText()
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        Logger.e(LOG_TAG_UI, "Failed to read $targetUri: ${e.message}", e)
+                                                        null
                                                     }
-                                                    delayMillis = targetCal.timeInMillis - now.timeInMillis
-                                                    isRecurring = true
+                                                }
+                                            }
+
+                                            // 2. If rethink_state.json was empty or missing, fallback to rethink_automated_state.json
+                                            if (stateJsonString.isNullOrBlank()) {
+                                                val fallbackUri = getAuthorizedFileUri("rethink_automated_state.json")
+                                                    ?: prefs.getString("automated_export_state_uri", null)?.let { android.net.Uri.parse(it) }
+                                                    ?: prefs.getString("last_import_state_uri", null)?.let { android.net.Uri.parse(it) }
+                                                
+                                                if (fallbackUri != null && fallbackUri != targetUri) {
+                                                    val fallbackText = withContext(Dispatchers.IO) {
+                                                        try {
+                                                            contentResolver.openInputStream(fallbackUri)?.use { inputStream ->
+                                                                InputStreamReader(inputStream).readText()
+                                                            }
+                                                        } catch (e: Exception) {
+                                                            null
+                                                        }
+                                                    }
+                                                    if (!fallbackText.isNullOrBlank()) {
+                                                        Logger.i(LOG_TAG_UI, "rethink_state.json was empty/missing; fell back to rethink_automated_state.json")
+                                                        targetUri = fallbackUri
+                                                        stateJsonString = fallbackText
+                                                    }
+                                                }
+                                            }
+
+                                            if (targetUri == null) {
+                                                val err = "No state file found. Authorize 'rethink_state.json' in Automation Setup."
+                                                Logger.e(LOG_TAG_UI, err)
+                                                executionResults.add("✗ import state: Failed ($err)")
+                                                success = false
+                                            } else if (stateJsonString.isNullOrBlank()) {
+                                                val err = "State file is empty (0 bytes). Please paste valid JSON configuration into 'rethink_state.json' (or run 'export state' first)."
+                                                Logger.e(LOG_TAG_UI, err)
+                                                executionResults.add("✗ import state: Failed ($err)")
+                                                success = false
+                                            } else {
+                                                try {
+                                                    val cleanStateJson = if (stateJsonString.startsWith("\uFEFF")) stateJsonString.substring(1).trim() else stateJsonString.trim()
+                                                    val json = JSONObject(cleanStateJson)
+                                                    importStateFromJson(json)
+                                                    Logger.i(LOG_TAG_UI, "Command executed: State imported successfully from $targetUri")
+                                                    executionResults.add("✓ import state: Success (reloaded firewall & DNS rules)")
+                                                    success = true
+                                                } catch (e: Exception) {
+                                                    val err = "Error applying state: ${e.message}"
+                                                    Logger.e(LOG_TAG_UI, err, e)
+                                                    executionResults.add("✗ import state: Failed ($err)")
+                                                    success = false
+                                                }
+                                            }
+                                        }
+                                        command == "export" && data == "state" -> {
+                                            val savedUri = getAuthorizedFileUri("rethink_automated_state.json", "rethink_state.json", "state.json")
+                                                ?: prefs.getString("automated_export_state_uri", null)?.let { android.net.Uri.parse(it) }
+                                            if (savedUri != null) {
+                                                try {
+                                                    exportStateToJson(savedUri)
+                                                    Logger.i(LOG_TAG_UI, "Command executed: State exported successfully to $savedUri")
+                                                    executionResults.add("✓ export state: Success (saved to rethink_automated_state.json)")
+                                                    success = true
+                                                } catch (e: Exception) {
+                                                    val err = "Error exporting state: ${e.message}"
+                                                    Logger.e(LOG_TAG_UI, err, e)
+                                                    executionResults.add("✗ export state: Failed ($err)")
+                                                    success = false
                                                 }
                                             } else {
-                                                val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
-                                                val executeTime = sdf.parse(executeAtStr)?.time ?: 0L
-                                                val now = System.currentTimeMillis()
-                                                if (executeTime > now) {
-                                                    delayMillis = executeTime - now
-                                                }
+                                                val err = "No export state file found. Authorize 'rethink_automated_state.json' in Automation Setup."
+                                                Logger.e(LOG_TAG_UI, err)
+                                                executionResults.add("✗ export state: Failed ($err)")
+                                                success = false
                                             }
-                                        } catch (e: Exception) {
-                                            android.util.Log.e("CustomSettings", "Invalid executeAt format: $executeAtStr")
                                         }
-                                    }
-                                    
-                                    val task: suspend () -> Boolean = {
-                                        var success = false
-                                        
-                                        if (command == "import" && data == "state") {
-                                        val savedUriStr = prefs.getString("last_import_state_uri", null)
-                                        if (savedUriStr != null) {
-                                            val savedUri = android.net.Uri.parse(savedUriStr)
-                                            try {
-                                                val stateJsonString = withContext(Dispatchers.IO) {
-                                                    contentResolver.openInputStream(savedUri)?.use { inputStream ->
-                                                        InputStreamReader(inputStream).readText()
+                                        command == "export" && data == "stats" -> {
+                                            val savedUri = getAuthorizedFileUri("rethink_automated_stats.xls", "rethink_stats.xls", "stats.xls", "rethink_logs.xls")
+                                                ?: prefs.getString("automated_export_stats_uri", null)?.let { android.net.Uri.parse(it) }
+                                            if (savedUri != null) {
+                                                try {
+                                                    val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
+                                                    var fromTime: Long? = null
+                                                    if (cmdObj.has("from")) {
+                                                        fromTime = sdf.parse(cmdObj.getString("from"))?.time
                                                     }
-                                                }
-                                                if (stateJsonString != null) {
-                                                    importStateFromJson(JSONObject(stateJsonString))
-                                                    Toast.makeText(this@CustomSettingsActivity, "Command executed: State imported", Toast.LENGTH_SHORT).show()
+                                                    var toTime: Long? = null
+                                                    if (cmdObj.has("to")) {
+                                                        toTime = sdf.parse(cmdObj.getString("to"))?.time
+                                                    }
+                                                    
+                                                    exportLogsToExcel(savedUri, fromTime, toTime)
+                                                    Logger.i(LOG_TAG_UI, "Command executed: Stats exported successfully to $savedUri")
+                                                    executionResults.add("✓ export stats: Success")
                                                     success = true
-                                                } else {
-                                                    Toast.makeText(this@CustomSettingsActivity, "Command failed: Could not read file", Toast.LENGTH_LONG).show()
+                                                } catch (e: Exception) {
+                                                    val err = "Error exporting stats: ${e.message}"
+                                                    Logger.e(LOG_TAG_UI, err, e)
+                                                    executionResults.add("✗ export stats: Failed ($err)")
+                                                    success = false
                                                 }
-                                            } catch (e: Exception) {
-                                                Toast.makeText(this@CustomSettingsActivity, "Error importing state: ${e.message}", Toast.LENGTH_LONG).show()
+                                            } else {
+                                                val err = "No export stats file found. Authorize 'rethink_automated_stats.xls' in Automation Setup."
+                                                Logger.e(LOG_TAG_UI, err)
+                                                executionResults.add("✗ export stats: Failed ($err)")
+                                                success = false
                                             }
-                                        } else {
-                                            Toast.makeText(this@CustomSettingsActivity, "No previously selected state import file found", Toast.LENGTH_LONG).show()
                                         }
-                                    } else if (command == "export" && data == "state") {
-                                        val savedUriStr = prefs.getString("automated_export_state_uri", null)
-                                        if (savedUriStr != null) {
-                                            val savedUri = android.net.Uri.parse(savedUriStr)
-                                            try {
-                                                exportStateToJson(savedUri)
-                                                Toast.makeText(this@CustomSettingsActivity, "Command executed: State exported", Toast.LENGTH_SHORT).show()
-                                                success = true
-                                            } catch (e: Exception) {
-                                                Toast.makeText(this@CustomSettingsActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                                            }
-                                        } else {
-                                            Toast.makeText(this@CustomSettingsActivity, "No automated state export location configured", Toast.LENGTH_LONG).show()
+                                        else -> {
+                                            Logger.w(LOG_TAG_UI, "Unknown command ignored: $command $data")
+                                            executionResults.add("⚠️ Ignored unknown command: $command $data")
+                                            success = true
                                         }
-                                    } else if (command == "export" && data == "stats") {
-                                        val savedUriStr = prefs.getString("automated_export_stats_uri", null)
-                                        if (savedUriStr != null) {
-                                            val savedUri = android.net.Uri.parse(savedUriStr)
-                                            try {
-                                                val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
-                                                var fromTime: Long? = null
-                                                if (cmdObj.has("from")) {
-                                                    fromTime = sdf.parse(cmdObj.getString("from"))?.time
-                                                }
-                                                var toTime: Long? = null
-                                                if (cmdObj.has("to")) {
-                                                    toTime = sdf.parse(cmdObj.getString("to"))?.time
-                                                }
-                                                
-                                                exportLogsToExcel(savedUri, fromTime, toTime)
-                                                Toast.makeText(this@CustomSettingsActivity, "Command executed: Stats exported", Toast.LENGTH_SHORT).show()
-                                                success = true
-                                            } catch (e: Exception) {
-                                                Toast.makeText(this@CustomSettingsActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                                            }
-                                        } else {
-                                            Toast.makeText(this@CustomSettingsActivity, "No automated stats export location configured", Toast.LENGTH_LONG).show()
-                                        }
-                                    } else {
-                                        // Ignore unknown commands
-                                        success = true
                                     }
                                     success
                                 }
 
-                                    if (isRecurring) {
-                                        val job = launch {
-                                            var nextDelay = delayMillis
-                                            while (true) {
-                                                kotlinx.coroutines.delay(nextDelay)
-                                                task()
-                                                val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-                                                val parsedTime = sdf.parse(executeAtStr)
-                                                if (parsedTime != null) {
-                                                    val now = java.util.Calendar.getInstance()
-                                                    val target = java.util.Calendar.getInstance()
-                                                    target.time = parsedTime
-                                                    
-                                                    val targetCal = java.util.Calendar.getInstance()
-                                                    targetCal.set(java.util.Calendar.HOUR_OF_DAY, target.get(java.util.Calendar.HOUR_OF_DAY))
-                                                    targetCal.set(java.util.Calendar.MINUTE, target.get(java.util.Calendar.MINUTE))
-                                                    targetCal.set(java.util.Calendar.SECOND, 0)
-                                                    targetCal.set(java.util.Calendar.MILLISECOND, 0)
-                                                    
-                                                    if (targetCal.before(now) || targetCal.timeInMillis <= now.timeInMillis) {
-                                                        targetCal.add(java.util.Calendar.DAY_OF_MONTH, 1)
-                                                    }
-                                                    nextDelay = targetCal.timeInMillis - now.timeInMillis
-                                                } else {
-                                                    nextDelay = 24 * 60 * 60 * 1000L
+                                if (isRecurring) {
+                                    val job = launch {
+                                        var nextDelay = delayMillis
+                                        while (true) {
+                                            kotlinx.coroutines.delay(nextDelay)
+                                            task()
+                                            val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                                            val parsedTime = sdf.parse(executeAtStr)
+                                            if (parsedTime != null) {
+                                                val now = java.util.Calendar.getInstance()
+                                                val target = java.util.Calendar.getInstance()
+                                                target.time = parsedTime
+                                                
+                                                val targetCal = java.util.Calendar.getInstance()
+                                                targetCal.set(java.util.Calendar.HOUR_OF_DAY, target.get(java.util.Calendar.HOUR_OF_DAY))
+                                                targetCal.set(java.util.Calendar.MINUTE, target.get(java.util.Calendar.MINUTE))
+                                                targetCal.set(java.util.Calendar.SECOND, 0)
+                                                targetCal.set(java.util.Calendar.MILLISECOND, 0)
+                                                
+                                                if (targetCal.before(now) || targetCal.timeInMillis <= now.timeInMillis) {
+                                                    targetCal.add(java.util.Calendar.DAY_OF_MONTH, 1)
                                                 }
+                                                nextDelay = targetCal.timeInMillis - now.timeInMillis
+                                            } else {
+                                                nextDelay = 24 * 60 * 60 * 1000L
                                             }
                                         }
-                                        pendingCommandJobs.add(job)
-                                    } else if (delayMillis > 0) {
-                                        val job = launch {
-                                            kotlinx.coroutines.delay(delayMillis)
-                                            task()
-                                        }
-                                        pendingCommandJobs.add(job)
-                                    } else {
-                                        val success = task()
-                                        if (!success) {
-                                            android.util.Log.e("CustomSettings", "Command sequence aborted at $command $data")
-                                            Toast.makeText(this@CustomSettingsActivity, "Command sequence aborted at: $command $data", Toast.LENGTH_SHORT).show()
-                                            break
-                                        }
+                                    }
+                                    pendingCommandJobs.add(job)
+                                    executionResults.add("⏳ $command $data: Scheduled recurring at $executeAtStr")
+                                } else if (delayMillis > 0) {
+                                    val job = launch {
+                                        kotlinx.coroutines.delay(delayMillis)
+                                        task()
+                                    }
+                                    pendingCommandJobs.add(job)
+                                    executionResults.add("⏳ $command $data: Scheduled (delay ${delayMillis / 1000}s)")
+                                } else {
+                                    val success = task()
+                                    if (!success) {
+                                        anyCommandFailed = true
+                                        break
                                     }
                                 }
                             }
+
+                            if (executionResults.isNotEmpty()) {
+                                val title = if (anyCommandFailed) "Command Sequence Incomplete" else "Commands Executed Successfully"
+                                val message = executionResults.joinToString("\n\n")
+
+                                MaterialAlertDialogBuilder(this@CustomSettingsActivity, R.style.App_Dialog_NoDim)
+                                    .setTitle(title)
+                                    .setMessage(message)
+                                    .setPositiveButton("OK", null)
+                                    .show()
+
+                                if (!anyCommandFailed) {
+                                    Toast.makeText(this@CustomSettingsActivity, "All commands executed successfully", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                         } catch (e: Exception) {
-                            android.util.Log.e("CustomSettings", "Error importing commands", e)
-                            Toast.makeText(this@CustomSettingsActivity, "Error importing commands: ${e.message}", Toast.LENGTH_LONG).show()
+                            Logger.e(LOG_TAG_UI, "Error importing commands: ${e.message}", e)
+                            MaterialAlertDialogBuilder(this@CustomSettingsActivity, R.style.App_Dialog_NoDim)
+                                .setTitle("Error Importing Commands")
+                                .setMessage(e.message ?: "Unknown error")
+                                .setPositiveButton("OK", null)
+                                .show()
                         }
                     }
                 }
@@ -543,17 +678,19 @@ class CustomSettingsActivity : BaseActivity() {
         if (json.has("status")) {
             val status = json.getString("status")
             val vpnState = VpnController.state()
-            android.util.Log.i("CustomSettings", "Importing status: $status (current: ${vpnState.on})")
-            if (status == "started" && !vpnState.on) {
-                VpnController.start(this@CustomSettingsActivity)
-            } else if (status == "stopped" && vpnState.on) {
-                VpnController.stop("State imported from JSON", this@CustomSettingsActivity)
+            Logger.i(LOG_TAG_UI, "Importing status: $status (current: ${vpnState.on})")
+            withContext(Dispatchers.Main) {
+                if (status == "started" && !vpnState.on) {
+                    VpnController.start(this@CustomSettingsActivity)
+                } else if (status == "stopped" && vpnState.on) {
+                    VpnController.stop("State imported from JSON", this@CustomSettingsActivity)
+                }
             }
         }
 
         if (json.has("universal")) {
             val universal = json.getJSONObject("universal")
-            android.util.Log.i("CustomSettings", "Importing universal rules")
+            Logger.i(LOG_TAG_UI, "Importing universal rules")
             if (universal.has("blockWhenDeviceLocked")) persistentState.setBlockWhenDeviceLocked(universal.getBoolean("blockWhenDeviceLocked"))
             if (universal.has("blockAppWhenBackground")) persistentState.setBlockAppWhenBackground(universal.getBoolean("blockAppWhenBackground"))
             if (universal.has("udpBlocked")) persistentState.setUdpBlocked(universal.getBoolean("udpBlocked"))
@@ -582,13 +719,21 @@ class CustomSettingsActivity : BaseActivity() {
                 importCustomDomains(perappParent.getJSONArray("domain"), false)
             }
         }
+
+        try {
+            val domCount = DomainRulesManager.load()
+            val ipCount = IpRulesManager.load()
+            Logger.i(LOG_TAG_UI, "Reloaded rules into engine: $domCount domains, $ipCount IPs")
+        } catch (e: Exception) {
+            Logger.e(LOG_TAG_UI, "Error reloading rules into engine: ${e.message}", e)
+        }
     }
 
     private suspend fun importCustomIps(array: JSONArray, isUniversal: Boolean) {
         val currentRules = customIpRepository.getIpRules().filter { 
             if (isUniversal) it.uid == com.celzero.bravedns.util.Constants.UID_EVERYBODY else it.uid != com.celzero.bravedns.util.Constants.UID_EVERYBODY 
         }
-        android.util.Log.i("CustomSettings", "Importing ${array.length()} CustomIp rules (Universal: $isUniversal)")
+        Logger.i(LOG_TAG_UI, "Importing ${array.length()} CustomIp rules (Universal: $isUniversal)")
         
         for (i in 0 until array.length()) {
             val ruleJson = array.getJSONObject(i)
@@ -609,12 +754,12 @@ class CustomSettingsActivity : BaseActivity() {
                 newRule.isActive = isActive
                 newRule.status = status
                 customIpRepository.insert(newRule)
-                android.util.Log.i("CustomSettings", "Inserted CustomIp: $ipAddress:$port (uid: $uid)")
+                Logger.i(LOG_TAG_UI, "Inserted CustomIp: $ipAddress:$port (uid: $uid)")
             } else if (existing.isActive != isActive || existing.status != status) {
                 existing.isActive = isActive
                 existing.status = status
                 customIpRepository.update(existing)
-                android.util.Log.i("CustomSettings", "Updated CustomIp: $ipAddress:$port (uid: $uid)")
+                Logger.i(LOG_TAG_UI, "Updated CustomIp: $ipAddress:$port (uid: $uid)")
             }
         }
     }
@@ -623,7 +768,7 @@ class CustomSettingsActivity : BaseActivity() {
         val currentRules = customDomainRepository.getAllCustomDomains().filter { 
             if (isUniversal) it.uid == com.celzero.bravedns.util.Constants.UID_EVERYBODY else it.uid != com.celzero.bravedns.util.Constants.UID_EVERYBODY 
         }
-        android.util.Log.i("CustomSettings", "Importing ${array.length()} CustomDomain rules (Universal: $isUniversal)")
+        Logger.i(LOG_TAG_UI, "Importing ${array.length()} CustomDomain rules (Universal: $isUniversal)")
         
         for (i in 0 until array.length()) {
             val ruleJson = array.getJSONObject(i)
@@ -642,7 +787,7 @@ class CustomSettingsActivity : BaseActivity() {
                 newRule.type = type
                 newRule.ips = ips
                 customDomainRepository.insert(newRule)
-                android.util.Log.i("CustomSettings", "Inserted CustomDomain: $domain (uid: $uid)")
+                Logger.i(LOG_TAG_UI, "Inserted CustomDomain: $domain (uid: $uid)")
             } else if (existing.status != status || existing.type != type || existing.ips != ips) {
                 val newRule = com.celzero.bravedns.database.CustomDomain(null)
                 newRule.domain = domain
@@ -651,7 +796,7 @@ class CustomSettingsActivity : BaseActivity() {
                 newRule.type = type
                 newRule.ips = ips
                 customDomainRepository.update(existing, newRule)
-                android.util.Log.i("CustomSettings", "Updated CustomDomain: $domain (uid: $uid)")
+                Logger.i(LOG_TAG_UI, "Updated CustomDomain: $domain (uid: $uid)")
             }
         }
     }
@@ -769,4 +914,151 @@ class CustomSettingsActivity : BaseActivity() {
                 }
             }
         }
+
+    private fun getAuthorizedFileUri(vararg candidateNames: String): android.net.Uri? {
+        val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
+        val jsonString = prefs.getString("authorized_files_map", "{}") ?: "{}"
+        try {
+            val jsonObject = JSONObject(jsonString)
+            // 1. Exact match on candidate names
+            for (name in candidateNames) {
+                val trimmed = name.trim()
+                if (jsonObject.has(trimmed)) {
+                    val uriStr = jsonObject.getString(trimmed)
+                    if (!uriStr.isNullOrEmpty()) return android.net.Uri.parse(uriStr)
+                }
+            }
+            // 2. Case-insensitive match on candidate names
+            val keys = jsonObject.keys()
+            val keyList = mutableListOf<String>()
+            while (keys.hasNext()) {
+                keyList.add(keys.next())
+            }
+            for (candidate in candidateNames) {
+                val trimmed = candidate.trim()
+                val matchedKey = keyList.find { it.trim().equals(trimmed, ignoreCase = true) }
+                if (matchedKey != null) {
+                    val uriStr = jsonObject.getString(matchedKey)
+                    if (!uriStr.isNullOrEmpty()) return android.net.Uri.parse(uriStr)
+                }
+            }
+            // 3. Substring match fallback (e.g. key contains "automated_state" or "stats.xls")
+            for (candidate in candidateNames) {
+                val trimmed = candidate.trim()
+                val matchedKey = keyList.find { it.contains(trimmed, ignoreCase = true) }
+                if (matchedKey != null) {
+                    val uriStr = jsonObject.getString(matchedKey)
+                    if (!uriStr.isNullOrEmpty()) return android.net.Uri.parse(uriStr)
+                }
+            }
+        } catch (e: Exception) {
+            Logger.e(LOG_TAG_UI, "Error reading authorized_files_map: ${e.message}", e)
+        }
+        return null
+    }
+
+    private fun getAuthorizedFilesCount(): Int {
+        val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
+        val jsonString = prefs.getString("authorized_files_map", "{}") ?: "{}"
+        return try {
+            JSONObject(jsonString).length()
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    private fun updateAutomationUi() {
+        val prefs = getSharedPreferences("RethinkPrefs", Context.MODE_PRIVATE)
+        val isEnabled = prefs.getBoolean("automation_service_enabled", false)
+        val count = getAuthorizedFilesCount()
+
+        // Detach listener while setting state programmatically to avoid false triggers
+        b.acsAutomationSwitch.setOnCheckedChangeListener(null)
+        b.acsAutomationSwitch.isChecked = isEnabled && count > 0
+
+        if (count == 0) {
+            b.acsAutomationStatus.text = "⚠️ 0 out of 4 files authorized (Setup required)"
+            b.acsAutomationStatus.setTextColor(Color.parseColor("#C62828"))
+            if (isEnabled) {
+                prefs.edit().putBoolean("automation_service_enabled", false).apply()
+                b.acsAutomationSwitch.isChecked = false
+            }
+        } else if (count < 4) {
+            b.acsAutomationStatus.text = "⚠️ $count out of 4 files authorized"
+            b.acsAutomationStatus.setTextColor(Color.parseColor("#E65100"))
+        } else {
+            b.acsAutomationStatus.text = "✓ $count out of 4 files authorized"
+            b.acsAutomationStatus.setTextColor(Color.parseColor("#2E7D32"))
+        }
+
+        b.acsAutomationSwitch.setOnCheckedChangeListener { _, isChecked ->
+            val fileCount = getAuthorizedFilesCount()
+            if (isChecked) {
+                if (fileCount == 0) {
+                    showAutomationPermissionsDialog()
+                } else {
+                    prefs.edit().putBoolean("automation_service_enabled", true).apply()
+                    Toast.makeText(this, "Automation service enabled", Toast.LENGTH_SHORT).show()
+                    checkFirstTimeNotice(prefs)
+                }
+            } else {
+                prefs.edit().putBoolean("automation_service_enabled", false).apply()
+                Toast.makeText(this, "Automation service disabled", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun checkFirstTimeNotice(prefs: android.content.SharedPreferences) {
+        val isFirstTime = !prefs.getBoolean("automation_first_time_notice_shown", false)
+        if (isFirstTime) {
+            prefs.edit().putBoolean("automation_first_time_notice_shown", true).apply()
+            MaterialAlertDialogBuilder(this, R.style.App_Dialog_NoDim)
+                .setTitle("Automation Service Active")
+                .setMessage("Background polling (every 5 minutes) is now active.\n\nEnsure the required files (rethink_command.json, rethink_automated_state.json, rethink_automated_stats.xls, rethink_state.json) are created in your folder/drive and authorized in Automation Setup.")
+                .setPositiveButton("Got It", null)
+                .setNeutralButton("View Authorized Files") { _, _ ->
+                    startActivity(Intent(this, AuthorizedFilesActivity::class.java))
+                }
+                .show()
+        }
+    }
+
+    private fun showAutomationPermissionsDialog() {
+        val message = """
+To run background automation, Rethink requires persistent Storage Access Framework (SAF) permissions for 4 files.
+
+⚠️ Important: Please create these 4 files in your local folder or Google Drive first before adding authorization:
+
+1. rethink_command.json (Read Permission)
+   Reads your automation tasks and schedules.
+
+2. rethink_automated_state.json (Write Permission)
+   Stores exported app & firewall state.
+
+3. rethink_automated_stats.xls (Write Permission)
+   Exports network logs to Excel.
+
+4. rethink_state.json (Read Permission)
+   Imports firewall & DNS rules.
+
+Once the files are created in your folder or Google Drive, tap "Configure Files" to select and authorize each file.
+        """.trimIndent()
+
+        MaterialAlertDialogBuilder(this, R.style.App_Dialog_NoDim)
+            .setTitle("File Permissions Required")
+            .setMessage(message)
+            .setPositiveButton("Configure Files") { _, _ ->
+                b.acsAutomationSwitch.isChecked = false
+                startActivity(Intent(this, AuthorizedFilesActivity::class.java))
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                b.acsAutomationSwitch.isChecked = false
+                dialog.dismiss()
+            }
+            .setOnCancelListener {
+                b.acsAutomationSwitch.isChecked = false
+            }
+            .setCancelable(false)
+            .show()
+    }
 }

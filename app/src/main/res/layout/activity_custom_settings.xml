@@ -72,6 +72,16 @@
                     android:text="Run background polling (5 mins) to automatically sync and execute commands"
                     android:textAppearance="?attr/textAppearanceBodySmall"
                     android:textColor="?attr/primaryLightColorText" />
+
+                <androidx.appcompat.widget.AppCompatTextView
+                    android:id="@+id/acs_automation_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="⚠️ 0 out of 4 files authorized (Setup required)"
+                    android:textAppearance="?attr/textAppearanceBodySmall"
+                    android:textStyle="bold"
+                    android:textColor="#C62828" />
             </LinearLayout>
 
             <androidx.appcompat.widget.SwitchCompat
