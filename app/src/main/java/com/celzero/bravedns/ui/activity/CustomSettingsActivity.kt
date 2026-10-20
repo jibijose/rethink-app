@@ -37,6 +37,7 @@ import android.content.res.Configuration
 
 import org.apache.poi.ss.usermodel.*
 import org.apache.poi.hssf.usermodel.HSSFWorkbook
+import java.util.Calendar
 import java.util.Date
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -286,7 +287,13 @@ class CustomSettingsActivity : BaseActivity() {
         val actualTo = toTime ?: System.currentTimeMillis()
         
         val allLogs = connectionTrackerRepository.getAllLogs()
-        val logs = allLogs.filter { it.timeStamp in actualFrom..actualTo }
+        val logs = allLogs.filter {
+            if (toTime != null) {
+                it.timeStamp >= actualFrom && it.timeStamp < actualTo
+            } else {
+                it.timeStamp in actualFrom..actualTo
+            }
+        }
         val workbook = HSSFWorkbook()
         val sheet = workbook.createSheet("Network Logs")
 
@@ -480,32 +487,29 @@ class CustomSettingsActivity : BaseActivity() {
                                 var isRecurring = false
                                 if (!executeAtStr.isNullOrEmpty()) {
                                     try {
-                                        if (executeAtStr.length <= 5 && executeAtStr.contains(":")) {
-                                            val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-                                            val parsedTime = sdf.parse(executeAtStr)
-                                            if (parsedTime != null) {
-                                                val now = java.util.Calendar.getInstance()
-                                                val target = java.util.Calendar.getInstance()
-                                                target.time = parsedTime
-                                                
-                                                val targetCal = java.util.Calendar.getInstance()
-                                                targetCal.set(java.util.Calendar.HOUR_OF_DAY, target.get(java.util.Calendar.HOUR_OF_DAY))
-                                                targetCal.set(java.util.Calendar.MINUTE, target.get(java.util.Calendar.MINUTE))
-                                                targetCal.set(java.util.Calendar.SECOND, 0)
-                                                targetCal.set(java.util.Calendar.MILLISECOND, 0)
-                                                
-                                                if (targetCal.before(now)) {
-                                                    targetCal.add(java.util.Calendar.DAY_OF_MONTH, 1)
-                                                }
-                                                delayMillis = targetCal.timeInMillis - now.timeInMillis
-                                                isRecurring = true
+                                        val parsedTod = parseTimeOfDay(executeAtStr)
+                                        if (parsedTod != null) {
+                                            val (h, m) = parsedTod
+                                            val now = Calendar.getInstance()
+                                            val targetCal = Calendar.getInstance().apply {
+                                                set(Calendar.HOUR_OF_DAY, h)
+                                                set(Calendar.MINUTE, m)
+                                                set(Calendar.SECOND, 0)
+                                                set(Calendar.MILLISECOND, 0)
                                             }
+                                            if (targetCal.before(now) || targetCal.timeInMillis <= now.timeInMillis) {
+                                                targetCal.add(Calendar.DAY_OF_MONTH, 1)
+                                            }
+                                            delayMillis = targetCal.timeInMillis - now.timeInMillis
+                                            isRecurring = true
                                         } else {
-                                            val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
-                                            val executeTime = sdf.parse(executeAtStr)?.time ?: 0L
+                                            val fullExecuteTime = parseFullDateTime(executeAtStr) ?: run {
+                                                val sdf = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())
+                                                sdf.parse(executeAtStr)?.time
+                                            } ?: 0L
                                             val now = System.currentTimeMillis()
-                                            if (executeTime > now) {
-                                                delayMillis = executeTime - now
+                                            if (fullExecuteTime > now) {
+                                                delayMillis = fullExecuteTime - now
                                             }
                                         }
                                     } catch (e: Exception) {
@@ -647,20 +651,21 @@ class CustomSettingsActivity : BaseActivity() {
                                             }
                                             if (savedUri != null) {
                                                 try {
-                                                    val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
-                                                    var fromTime: Long? = null
-                                                    if (cmdObj.has("from")) {
-                                                        fromTime = sdf.parse(cmdObj.getString("from"))?.time
-                                                    }
-                                                    var toTime: Long? = null
-                                                    if (cmdObj.has("to")) {
-                                                        toTime = sdf.parse(cmdObj.getString("to"))?.time
-                                                    }
-                                                    
+                                                    val runTime = System.currentTimeMillis()
+                                                    val resolvedRange = resolveExportTimeRange(cmdObj, runTime)
+                                                    val fromTime = resolvedRange?.first
+                                                    val toTime = resolvedRange?.second
+
                                                     exportLogsToExcel(savedUri, fromTime, toTime)
-                                                    Logger.i(LOG_TAG_UI, "Command executed: Stats exported successfully to $fileLabel")
-                                                    logActivity("Automated", "Export Stats", fileLabel, "SUCCESS", "Network logs exported to $fileLabel")
-                                                    executionResults.add("✓ export stats: Success (saved to $fileLabel)")
+                                                    val sdfLog = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())
+                                                    val rangeStr = if (fromTime != null && toTime != null) {
+                                                        " (${sdfLog.format(Date(fromTime))} -> ${sdfLog.format(Date(toTime))})"
+                                                    } else {
+                                                        ""
+                                                    }
+                                                    Logger.i(LOG_TAG_UI, "Command executed: Stats exported successfully to $fileLabel$rangeStr")
+                                                    logActivity("Automated", "Export Stats", fileLabel, "SUCCESS", "Network logs exported to $fileLabel$rangeStr")
+                                                    executionResults.add("✓ export stats: Success (saved to $fileLabel$rangeStr)")
                                                     success = true
                                                 } catch (e: Exception) {
                                                     val err = "Error exporting stats: ${e.message}"
@@ -695,21 +700,18 @@ class CustomSettingsActivity : BaseActivity() {
                                         while (isActive) {
                                             kotlinx.coroutines.delay(nextDelay)
                                             task()
-                                            val sdf = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-                                            val parsedTime = sdf.parse(executeAtStr)
-                                            if (parsedTime != null) {
-                                                val now = java.util.Calendar.getInstance()
-                                                val target = java.util.Calendar.getInstance()
-                                                target.time = parsedTime
-                                                
-                                                val targetCal = java.util.Calendar.getInstance()
-                                                targetCal.set(java.util.Calendar.HOUR_OF_DAY, target.get(java.util.Calendar.HOUR_OF_DAY))
-                                                targetCal.set(java.util.Calendar.MINUTE, target.get(java.util.Calendar.MINUTE))
-                                                targetCal.set(java.util.Calendar.SECOND, 0)
-                                                targetCal.set(java.util.Calendar.MILLISECOND, 0)
-                                                
+                                            val parsedTod = parseTimeOfDay(executeAtStr)
+                                            if (parsedTod != null) {
+                                                val (h, m) = parsedTod
+                                                val now = Calendar.getInstance()
+                                                val targetCal = Calendar.getInstance().apply {
+                                                    set(Calendar.HOUR_OF_DAY, h)
+                                                    set(Calendar.MINUTE, m)
+                                                    set(Calendar.SECOND, 0)
+                                                    set(Calendar.MILLISECOND, 0)
+                                                }
                                                 if (targetCal.before(now) || targetCal.timeInMillis <= now.timeInMillis) {
-                                                    targetCal.add(java.util.Calendar.DAY_OF_MONTH, 1)
+                                                    targetCal.add(Calendar.DAY_OF_MONTH, 1)
                                                 }
                                                 nextDelay = targetCal.timeInMillis - now.timeInMillis
                                             } else {
@@ -1073,6 +1075,219 @@ class CustomSettingsActivity : BaseActivity() {
         } else {
             Pair(calendarDays, rawDays.joinToString(","))
         }
+    }
+
+    private fun parsePeriodMillis(periodStr: String): Long? {
+        val trimmed = periodStr.trim()
+        val regex = Regex("""(\d+)\s*([dhmsDHMS])""")
+        val matches = regex.findAll(trimmed).toList()
+        if (matches.isEmpty()) return null
+        var totalMillis = 0L
+        for (match in matches) {
+            val amount = match.groupValues[1].toLongOrNull() ?: return null
+            val unit = match.groupValues[2].lowercase(Locale.US)
+            val millis = when (unit) {
+                "d" -> amount * 24 * 60 * 60 * 1000L
+                "h" -> amount * 60 * 60 * 1000L
+                "m" -> amount * 60 * 1000L
+                "s" -> amount * 1000L
+                else -> 0L
+            }
+            totalMillis += millis
+        }
+        return if (totalMillis > 0) totalMillis else null
+    }
+
+    private fun parseTimeOfDay(raw: String): Pair<Int, Int>? {
+        val trimmed = raw.trim()
+        val amPmRegex = Regex("""^(\d{1,2})(?::(\d{2}))?\s*(AM|PM|am|pm)$""", RegexOption.IGNORE_CASE)
+        val matchAmPm = amPmRegex.find(trimmed)
+        if (matchAmPm != null) {
+            val hStr = matchAmPm.groupValues[1]
+            val mStr = matchAmPm.groupValues[2]
+            val amPm = matchAmPm.groupValues[3].uppercase(Locale.US)
+            var hour = hStr.toIntOrNull() ?: return null
+            val minute = if (mStr.isNotEmpty()) mStr.toIntOrNull() ?: 0 else 0
+            if (hour !in 1..12 || minute !in 0..59) return null
+            if (amPm == "PM" && hour < 12) hour += 12
+            if (amPm == "AM" && hour == 12) hour = 0
+            return Pair(hour, minute)
+        }
+
+        val h24Regex = Regex("""^(\d{1,2}):(\d{2})(?::(\d{2}))?$""")
+        val match24 = h24Regex.find(trimmed)
+        if (match24 != null) {
+            val hour = match24.groupValues[1].toIntOrNull() ?: return null
+            val minute = match24.groupValues[2].toIntOrNull() ?: return null
+            if (hour in 0..23 && minute in 0..59) {
+                return Pair(hour, minute)
+            }
+        }
+        return null
+    }
+
+    private fun parseFullDateTime(raw: String): Long? {
+        val patterns = arrayOf(
+            "yyyy/MM/dd HH:mm:ss",
+            "yyyy/MM/dd HH:mm",
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm",
+            "yyyy/MM/dd hh:mm a",
+            "yyyy-MM-dd hh:mm a",
+            "yyyy/MM/dd hh:mma",
+            "yyyy-MM-dd hh:mma"
+        )
+        for (pattern in patterns) {
+            try {
+                val sdf = SimpleDateFormat(pattern, Locale.US)
+                sdf.isLenient = false
+                val date = sdf.parse(raw.trim())
+                if (date != null) return date.time
+            } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    private fun resolveExportTimeRange(cmdObj: JSONObject, runTime: Long): Pair<Long, Long>? {
+        if (cmdObj.has("period")) {
+            val periodStr = cmdObj.getString("period")
+            val millis = parsePeriodMillis(periodStr)
+            if (millis != null) {
+                val toTime = runTime
+                val fromTime = toTime - millis
+                return Pair(fromTime, toTime)
+            } else {
+                Logger.w(LOG_TAG_UI, "Invalid period format: $periodStr")
+            }
+        }
+
+        val fromRaw = cmdObj.optString("from", "").trim()
+        val toRaw = cmdObj.optString("to", "").trim()
+
+        if (fromRaw.isEmpty() && toRaw.isEmpty()) {
+            val startOfDay = Calendar.getInstance().apply {
+                timeInMillis = runTime
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+            return Pair(startOfDay, runTime)
+        }
+
+        val fullFrom = if (fromRaw.isNotEmpty()) parseFullDateTime(fromRaw) else null
+        val fullTo = if (toRaw.isNotEmpty()) parseFullDateTime(toRaw) else null
+
+        if (fullFrom != null || fullTo != null) {
+            val from = fullFrom ?: Calendar.getInstance().apply {
+                timeInMillis = fullTo ?: runTime
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+            val to = fullTo ?: runTime
+            return Pair(from, to)
+        }
+
+        val fromTod = if (fromRaw.isNotEmpty()) parseTimeOfDay(fromRaw) else null
+        val toTod = if (toRaw.isNotEmpty()) parseTimeOfDay(toRaw) else null
+
+        if (fromTod != null && toTod != null) {
+            val (h1, m1) = fromTod
+            val (h2, m2) = toTod
+
+            // Full-day case (e.g., 00:00 to 23:59)
+            if (h1 == 0 && m1 == 0 && h2 == 23 && m2 >= 50) {
+                val startCal = Calendar.getInstance().apply {
+                    timeInMillis = runTime
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                val endCal = Calendar.getInstance().apply {
+                    timeInMillis = startCal.timeInMillis
+                    add(Calendar.DAY_OF_MONTH, 1)
+                }
+                return Pair(startCal.timeInMillis, endCal.timeInMillis)
+            }
+
+            val minutes1 = h1 * 60 + m1
+            val minutes2 = h2 * 60 + m2
+
+            val (earlierH, earlierM) = if (minutes1 <= minutes2) Pair(h1, m1) else Pair(h2, m2)
+            val (laterH, laterM) = if (minutes1 <= minutes2) Pair(h2, m2) else Pair(h1, m1)
+
+            // End time is earlier time (e.g. 10AM) on the most recent occurrence at or before runTime (e.g. 20/Oct 10AM)
+            val endCal = Calendar.getInstance().apply {
+                timeInMillis = runTime
+                set(Calendar.HOUR_OF_DAY, earlierH)
+                set(Calendar.MINUTE, earlierM)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            if (endCal.timeInMillis > runTime) {
+                endCal.add(Calendar.DAY_OF_MONTH, -1)
+            }
+
+            // Start time is later time (e.g. 3PM) on the day before endCal (e.g. 19/Oct 3PM)
+            val startCal = Calendar.getInstance().apply {
+                timeInMillis = endCal.timeInMillis
+                add(Calendar.DAY_OF_MONTH, -1)
+                set(Calendar.HOUR_OF_DAY, laterH)
+                set(Calendar.MINUTE, laterM)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            return Pair(startCal.timeInMillis, endCal.timeInMillis)
+        }
+
+        if (fromTod != null) {
+            val (h, m) = fromTod
+            val cal = Calendar.getInstance().apply {
+                timeInMillis = runTime
+                set(Calendar.HOUR_OF_DAY, h)
+                set(Calendar.MINUTE, m)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            if (cal.timeInMillis > runTime) {
+                cal.add(Calendar.DAY_OF_MONTH, -1)
+            }
+            return Pair(cal.timeInMillis, runTime)
+        }
+
+        if (toTod != null) {
+            val (h, m) = toTod
+            val toCal = Calendar.getInstance().apply {
+                timeInMillis = runTime
+                set(Calendar.HOUR_OF_DAY, h)
+                set(Calendar.MINUTE, m)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            if (toCal.timeInMillis > runTime) {
+                toCal.add(Calendar.DAY_OF_MONTH, -1)
+            }
+            val fromCal = Calendar.getInstance().apply {
+                timeInMillis = toCal.timeInMillis
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            return Pair(fromCal.timeInMillis, toCal.timeInMillis)
+        }
+
+        val startOfDay = Calendar.getInstance().apply {
+            timeInMillis = runTime
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        return Pair(startOfDay, runTime)
     }
 
     private fun getFileName(uri: android.net.Uri): String? {
