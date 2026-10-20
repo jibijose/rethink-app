@@ -139,7 +139,7 @@ class AuthorizedFilesActivity : BaseActivity() {
 
     private fun updateToolbarSubtitle() {
         val count = authorizedFiles.size
-        supportActionBar?.subtitle = "$count out of 4 files authorized"
+        supportActionBar?.subtitle = if (count < 4) "$count out of 4 files authorized" else "$count files authorized"
     }
 
     private fun getFileName(uri: Uri): String? {
