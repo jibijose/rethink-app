@@ -87,6 +87,7 @@ import com.celzero.bravedns.scheduler.RpnProxyUpdateWorker
 import com.celzero.bravedns.scheduler.WgProxyPingController
 import com.celzero.bravedns.service.FirewallManager.NOTIF_CHANNEL_ID_FIREWALL_ALERTS
 import com.celzero.bravedns.service.ProxyManager.ID_WG_BASE
+import com.celzero.bravedns.scheduler.AutomationManager
 import com.celzero.bravedns.tunnel.TunDnsManager
 
 import com.celzero.bravedns.ui.NotificationHandlerActivity
@@ -1289,6 +1290,10 @@ class BraveVPNService : VpnService(), ConnectionMonitor.NetworkListener, Network
                     }
                 }
             }
+        }
+        io("automationCatchUp") {
+            AutomationManager.init(this@BraveVPNService)
+            AutomationManager.checkAndRunCatchUp(this@BraveVPNService)
         }
         return START_STICKY
     }

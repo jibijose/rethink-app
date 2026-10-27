@@ -42,23 +42,10 @@ import java.util.Date
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-data class ScheduledJobInfo(
-    val id: String = java.util.UUID.randomUUID().toString(),
-    val command: String,
-    val data: String,
-    val file: String,
-    val executeAt: String,
-    val days: String,
-    val isRecurring: Boolean,
-    val job: kotlinx.coroutines.Job
-)
+import com.celzero.bravedns.scheduler.AutomationManager
+import com.celzero.bravedns.scheduler.PersistentJobInfo
 
 class CustomSettingsActivity : BaseActivity() {
-
-    companion object {
-        val automationScope = kotlinx.coroutines.CoroutineScope(Dispatchers.Default + kotlinx.coroutines.SupervisorJob())
-        val activeJobs = java.util.Collections.synchronizedList(mutableListOf<ScheduledJobInfo>())
-    }
 
     private lateinit var b: ActivityCustomSettingsBinding
     private val persistentState by inject<PersistentState>()
@@ -156,6 +143,7 @@ class CustomSettingsActivity : BaseActivity() {
     override fun onResume() {
         super.onResume()
         updateAutomationUi()
+        AutomationManager.init(this)
     }
 
     private val manualExportStateLauncher =
@@ -464,297 +452,68 @@ class CustomSettingsActivity : BaseActivity() {
                                 return@launch
                             }
 
-                            activeJobs.forEach { it.job.cancel() }
-                            activeJobs.clear()
+                            AutomationManager.clearAllJobs(this@CustomSettingsActivity)
                             logActivity("Manual", "Import Commands", commandsFileName, "SUCCESS", "Loaded ${commandsArray.length()} commands")
 
                             val executionResults = mutableListOf<String>()
                             var anyCommandFailed = false
+                            val newPersistentJobs = mutableListOf<PersistentJobInfo>()
 
                             for (i in 0 until commandsArray.length()) {
                                 val cmdObj = commandsArray.optJSONObject(i) ?: continue
                                 if (!cmdObj.optBoolean("execute", false)) {
                                     continue
                                 }
-                                
+
                                 val command = cmdObj.optString("command").trim().lowercase()
                                 val data = cmdObj.optString("data").trim().lowercase()
                                 val customFile = cmdObj.optString("file", "").trim()
-                                val (allowedDays, daysLabel) = parseDays(cmdObj)
-                                
-                                val executeAtStr = cmdObj.optString("executeAt", null)
-                                var delayMillis = 0L
-                                var isRecurring = false
-                                if (!executeAtStr.isNullOrEmpty()) {
-                                    try {
-                                        val parsedTod = parseTimeOfDay(executeAtStr)
-                                        if (parsedTod != null) {
-                                            val (h, m) = parsedTod
-                                            val now = Calendar.getInstance()
-                                            val targetCal = Calendar.getInstance().apply {
-                                                set(Calendar.HOUR_OF_DAY, h)
-                                                set(Calendar.MINUTE, m)
-                                                set(Calendar.SECOND, 0)
-                                                set(Calendar.MILLISECOND, 0)
-                                            }
-                                            if (targetCal.before(now) || targetCal.timeInMillis <= now.timeInMillis) {
-                                                targetCal.add(Calendar.DAY_OF_MONTH, 1)
-                                            }
-                                            delayMillis = targetCal.timeInMillis - now.timeInMillis
-                                            isRecurring = true
-                                        } else {
-                                            val fullExecuteTime = parseFullDateTime(executeAtStr) ?: run {
-                                                val sdf = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())
-                                                sdf.parse(executeAtStr)?.time
-                                            } ?: 0L
-                                            val now = System.currentTimeMillis()
-                                            if (fullExecuteTime > now) {
-                                                delayMillis = fullExecuteTime - now
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-                                        Logger.e(LOG_TAG_UI, "Invalid executeAt format: $executeAtStr", e)
-                                    }
+                                val (_, daysLabel) = parseDays(cmdObj)
+                                val executeAtStr = if (cmdObj.has("executeAt") && !cmdObj.isNull("executeAt")) {
+                                    cmdObj.getString("executeAt").trim()
+                                } else {
+                                    ""
                                 }
-                                
+
                                 val defaultFile = when {
                                     data == "stats" -> "rethink_automated_stats.xls"
                                     command == "export" && data == "state" -> "rethink_automated_state.json"
                                     else -> "rethink_state.json"
                                 }
                                 val fileLabel = if (customFile.isNotEmpty()) customFile else defaultFile
-
-                                val task: suspend () -> Boolean = task@ {
-                                    var success = false
-                                    val currentCal = java.util.Calendar.getInstance()
-                                    val currentDay = currentCal.get(java.util.Calendar.DAY_OF_WEEK)
-                                    if (allowedDays != null && !allowedDays.contains(currentDay)) {
-                                        val dayName = java.text.SimpleDateFormat("EEEE", java.util.Locale.getDefault()).format(currentCal.time)
-                                        val skipMsg = "Today ($dayName) is not in allowed days ($daysLabel)"
-                                        Logger.i(LOG_TAG_UI, "Command $command $data skipped: $skipMsg")
-                                        logActivity("Automated", "$command $data".uppercase(), fileLabel, "SKIPPED", skipMsg)
-                                        executionResults.add("⏭️ $command $data: Skipped (today $dayName not in $daysLabel)")
-                                        return@task true
-                                    }
-
-                                    when {
-                                        command == "import" && data == "state" -> {
-                                            var targetUri = if (customFile.isNotEmpty()) {
-                                                getAuthorizedFileUri(customFile)
-                                            } else {
-                                                getAuthorizedFileUri("rethink_state.json", "state.json")
-                                            }
-
-                                            var stateJsonString: String? = null
-                                            if (targetUri != null) {
-                                                stateJsonString = withContext(Dispatchers.IO) {
-                                                    try {
-                                                        contentResolver.openInputStream(targetUri)?.use { inputStream ->
-                                                            InputStreamReader(inputStream).readText()
-                                                        }
-                                                    } catch (e: Exception) {
-                                                        Logger.e(LOG_TAG_UI, "Failed to read $targetUri: ${e.message}", e)
-                                                        null
-                                                    }
-                                                }
-                                            }
-
-                                            // Fallback to rethink_automated_state.json only if custom file was not explicitly provided
-                                            if (stateJsonString.isNullOrBlank() && customFile.isEmpty()) {
-                                                val fallbackUri = getAuthorizedFileUri("rethink_automated_state.json")
-                                                    ?: prefs.getString("automated_export_state_uri", null)?.let { android.net.Uri.parse(it) }
-                                                    ?: prefs.getString("last_import_state_uri", null)?.let { android.net.Uri.parse(it) }
-                                                
-                                                if (fallbackUri != null && fallbackUri != targetUri) {
-                                                    val fallbackText = withContext(Dispatchers.IO) {
-                                                        try {
-                                                            contentResolver.openInputStream(fallbackUri)?.use { inputStream ->
-                                                                InputStreamReader(inputStream).readText()
-                                                            }
-                                                        } catch (e: Exception) {
-                                                            null
-                                                        }
-                                                    }
-                                                    if (!fallbackText.isNullOrBlank()) {
-                                                        Logger.i(LOG_TAG_UI, "rethink_state.json was empty/missing; fell back to rethink_automated_state.json")
-                                                        targetUri = fallbackUri
-                                                        stateJsonString = fallbackText
-                                                    }
-                                                }
-                                            }
-
-                                            if (targetUri == null) {
-                                                val err = "File '$fileLabel' not found. Authorize '$fileLabel' in Automation Setup."
-                                                Logger.e(LOG_TAG_UI, err)
-                                                logActivity("Automated", "Import State", fileLabel, "FAILED", err)
-                                                executionResults.add("✗ import state: Failed ($err)")
-                                                success = false
-                                            } else if (stateJsonString.isNullOrBlank()) {
-                                                val err = "State file '$fileLabel' is empty (0 bytes). Please paste valid JSON configuration."
-                                                Logger.e(LOG_TAG_UI, err)
-                                                logActivity("Automated", "Import State", fileLabel, "FAILED", err)
-                                                executionResults.add("✗ import state: Failed ($err)")
-                                                success = false
-                                            } else {
-                                                try {
-                                                    val cleanStateJson = if (stateJsonString.startsWith("\uFEFF")) stateJsonString.substring(1).trim() else stateJsonString.trim()
-                                                    val json = JSONObject(cleanStateJson)
-                                                    importStateFromJson(json)
-                                                    Logger.i(LOG_TAG_UI, "Command executed: State imported successfully from $fileLabel")
-                                                    logActivity("Automated", "Import State", fileLabel, "SUCCESS", "Firewall & DNS rules reloaded")
-                                                    executionResults.add("✓ import state ($fileLabel): Success (reloaded firewall & DNS rules)")
-                                                    success = true
-                                                } catch (e: Exception) {
-                                                    val err = "Error applying state: ${e.message}"
-                                                    Logger.e(LOG_TAG_UI, err, e)
-                                                    logActivity("Automated", "Import State", fileLabel, "FAILED", err)
-                                                    executionResults.add("✗ import state ($fileLabel): Failed ($err)")
-                                                    success = false
-                                                }
-                                            }
-                                        }
-                                        command == "export" && data == "state" -> {
-                                            val savedUri = if (customFile.isNotEmpty()) {
-                                                getAuthorizedFileUri(customFile)
-                                            } else {
-                                                getAuthorizedFileUri("rethink_automated_state.json", "rethink_state.json", "state.json")
-                                                    ?: prefs.getString("automated_export_state_uri", null)?.let { android.net.Uri.parse(it) }
-                                            }
-                                            if (savedUri != null) {
-                                                try {
-                                                    exportStateToJson(savedUri)
-                                                    Logger.i(LOG_TAG_UI, "Command executed: State exported successfully to $fileLabel")
-                                                    logActivity("Automated", "Export State", fileLabel, "SUCCESS", "State saved to $fileLabel")
-                                                    executionResults.add("✓ export state: Success (saved to $fileLabel)")
-                                                    success = true
-                                                } catch (e: Exception) {
-                                                    val err = "Error exporting state: ${e.message}"
-                                                    Logger.e(LOG_TAG_UI, err, e)
-                                                    logActivity("Automated", "Export State", fileLabel, "FAILED", err)
-                                                    executionResults.add("✗ export state: Failed ($err)")
-                                                    success = false
-                                                }
-                                            } else {
-                                                val err = "No export state file found for '$fileLabel'. Authorize '$fileLabel' in Automation Setup."
-                                                Logger.e(LOG_TAG_UI, err)
-                                                logActivity("Automated", "Export State", fileLabel, "FAILED", err)
-                                                executionResults.add("✗ export state: Failed ($err)")
-                                                success = false
-                                            }
-                                        }
-                                        command == "export" && data == "stats" -> {
-                                            val savedUri = if (customFile.isNotEmpty()) {
-                                                getAuthorizedFileUri(customFile)
-                                            } else {
-                                                getAuthorizedFileUri("rethink_automated_stats.xls", "rethink_stats.xls", "stats.xls", "rethink_logs.xls")
-                                                    ?: prefs.getString("automated_export_stats_uri", null)?.let { android.net.Uri.parse(it) }
-                                            }
-                                            if (savedUri != null) {
-                                                try {
-                                                    val runTime = System.currentTimeMillis()
-                                                    val resolvedRange = resolveExportTimeRange(cmdObj, runTime)
-                                                    val fromTime = resolvedRange?.first
-                                                    val toTime = resolvedRange?.second
-
-                                                    exportLogsToExcel(savedUri, fromTime, toTime)
-                                                    val sdfLog = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())
-                                                    val rangeStr = if (fromTime != null && toTime != null) {
-                                                        " (${sdfLog.format(Date(fromTime))} -> ${sdfLog.format(Date(toTime))})"
-                                                    } else {
-                                                        ""
-                                                    }
-                                                    Logger.i(LOG_TAG_UI, "Command executed: Stats exported successfully to $fileLabel$rangeStr")
-                                                    logActivity("Automated", "Export Stats", fileLabel, "SUCCESS", "Network logs exported to $fileLabel$rangeStr")
-                                                    executionResults.add("✓ export stats: Success (saved to $fileLabel$rangeStr)")
-                                                    success = true
-                                                } catch (e: Exception) {
-                                                    val err = "Error exporting stats: ${e.message}"
-                                                    Logger.e(LOG_TAG_UI, err, e)
-                                                    logActivity("Automated", "Export Stats", fileLabel, "FAILED", err)
-                                                    executionResults.add("✗ export stats: Failed ($err)")
-                                                    success = false
-                                                }
-                                            } else {
-                                                val err = "No export stats file found for '$fileLabel'. Authorize '$fileLabel' in Automation Setup."
-                                                Logger.e(LOG_TAG_UI, err)
-                                                logActivity("Automated", "Export Stats", fileLabel, "FAILED", err)
-                                                executionResults.add("✗ export stats: Failed ($err)")
-                                                success = false
-                                            }
-                                        }
-                                        else -> {
-                                            Logger.w(LOG_TAG_UI, "Unknown command ignored: $command $data")
-                                            executionResults.add("⚠️ Ignored unknown command: $command $data")
-                                            success = true
-                                        }
-                                    }
-                                    success
-                                }
-
                                 val daysSuffix = if (daysLabel != "ALL") " [Days: $daysLabel]" else ""
                                 val fileSuffix = if (customFile.isNotEmpty()) " [File: $customFile]" else ""
 
-                                if (isRecurring) {
-                                    val job = automationScope.launch {
-                                        var nextDelay = delayMillis
-                                        while (isActive) {
-                                            kotlinx.coroutines.delay(nextDelay)
-                                            task()
-                                            val parsedTod = parseTimeOfDay(executeAtStr)
-                                            if (parsedTod != null) {
-                                                val (h, m) = parsedTod
-                                                val now = Calendar.getInstance()
-                                                val targetCal = Calendar.getInstance().apply {
-                                                    set(Calendar.HOUR_OF_DAY, h)
-                                                    set(Calendar.MINUTE, m)
-                                                    set(Calendar.SECOND, 0)
-                                                    set(Calendar.MILLISECOND, 0)
-                                                }
-                                                if (targetCal.before(now) || targetCal.timeInMillis <= now.timeInMillis) {
-                                                    targetCal.add(Calendar.DAY_OF_MONTH, 1)
-                                                }
-                                                nextDelay = targetCal.timeInMillis - now.timeInMillis
-                                            } else {
-                                                nextDelay = 24 * 60 * 60 * 1000L
-                                            }
-                                        }
-                                    }
-                                    val jobInfo = ScheduledJobInfo(
+                                if (executeAtStr.isNotEmpty()) {
+                                    val parsedTod = AutomationManager.parseTimeOfDay(executeAtStr)
+                                    val isRecurring = (parsedTod != null)
+                                    val jobInfo = PersistentJobInfo(
                                         command = command,
                                         data = data,
                                         file = fileLabel,
-                                        executeAt = executeAtStr ?: "",
+                                        executeAt = executeAtStr,
                                         days = daysLabel,
-                                        isRecurring = true,
-                                        job = job
+                                        isRecurring = isRecurring,
+                                        rawJson = cmdObj.toString()
                                     )
-                                    activeJobs.add(jobInfo)
-                                    executionResults.add("⏳ $command $data$fileSuffix: Scheduled recurring at $executeAtStr$daysSuffix")
-                                } else if (delayMillis > 0) {
-                                    lateinit var jobInfo: ScheduledJobInfo
-                                    val job = automationScope.launch {
-                                        kotlinx.coroutines.delay(delayMillis)
-                                        task()
-                                        activeJobs.remove(jobInfo)
-                                    }
-                                    jobInfo = ScheduledJobInfo(
-                                        command = command,
-                                        data = data,
-                                        file = fileLabel,
-                                        executeAt = executeAtStr ?: "",
-                                        days = daysLabel,
-                                        isRecurring = false,
-                                        job = job
-                                    )
-                                    activeJobs.add(jobInfo)
-                                    executionResults.add("⏳ $command $data$fileSuffix: Scheduled (delay ${delayMillis / 1000}s)$daysSuffix")
+                                    newPersistentJobs.add(jobInfo)
+                                    val typeStr = if (isRecurring) "Scheduled recurring" else "Scheduled one-time"
+                                    executionResults.add("⏳ $command $data$fileSuffix: $typeStr at $executeAtStr$daysSuffix")
                                 } else {
-                                    val success = task()
-                                    if (!success) {
+                                    val success = AutomationManager.executeSingleCommand(this@CustomSettingsActivity, cmdObj, isCatchUp = false)
+                                    if (success) {
+                                        executionResults.add("✓ $command $data$fileSuffix: Success")
+                                    } else {
+                                        executionResults.add("✗ $command $data$fileSuffix: Failed")
                                         anyCommandFailed = true
                                         break
                                     }
                                 }
+                            }
+
+                            if (newPersistentJobs.isNotEmpty()) {
+                                AutomationManager.savePersistentJobs(this@CustomSettingsActivity, newPersistentJobs)
+                                AutomationManager.startScheduler(this@CustomSettingsActivity)
                             }
 
                             if (executionResults.isNotEmpty()) {
@@ -1338,7 +1097,7 @@ class CustomSettingsActivity : BaseActivity() {
     }
 
     private fun showJobsDialog() {
-        val jobs = activeJobs.filter { it.job.isActive }
+        val jobs = AutomationManager.getPersistentJobs(this)
         if (jobs.isEmpty()) {
             MaterialAlertDialogBuilder(this, R.style.App_Dialog_NoDim)
                 .setTitle("Scheduled Jobs")
@@ -1362,6 +1121,7 @@ class CustomSettingsActivity : BaseActivity() {
         scrollView.addView(rootLayout)
 
         var dialog: androidx.appcompat.app.AlertDialog? = null
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
         for (jobInfo in jobs) {
             val itemCard = com.google.android.material.card.MaterialCardView(context).apply {
@@ -1400,7 +1160,12 @@ class CustomSettingsActivity : BaseActivity() {
 
             val tvSubtitle = androidx.appcompat.widget.AppCompatTextView(context).apply {
                 val typeStr = if (jobInfo.isRecurring) "Recurring" else "Scheduled"
-                text = "⏰ ${jobInfo.executeAt} • Days: ${jobInfo.days} ($typeStr)"
+                val lastRunText = if (jobInfo.lastExecutedTime > 0L) {
+                    "\nLast run: ${sdf.format(Date(jobInfo.lastExecutedTime))}"
+                } else {
+                    ""
+                }
+                text = "⏰ ${jobInfo.executeAt} • Days: ${jobInfo.days} ($typeStr)$lastRunText"
                 textSize = 13f
                 setTextColor(subtitleColor)
                 setPadding(0, 4, 0, 0)
@@ -1419,8 +1184,7 @@ class CustomSettingsActivity : BaseActivity() {
                 isFocusable = true
                 setBackgroundResource(android.R.drawable.list_selector_background)
                 setOnClickListener {
-                    jobInfo.job.cancel()
-                    activeJobs.remove(jobInfo)
+                    AutomationManager.removeJob(context, jobInfo.id)
                     Toast.makeText(context, "Cancelled ${jobInfo.command} ${jobInfo.data}", Toast.LENGTH_SHORT).show()
                     dialog?.dismiss()
                     showJobsDialog()
@@ -1438,8 +1202,7 @@ class CustomSettingsActivity : BaseActivity() {
             .setView(scrollView)
             .setPositiveButton("Close", null)
             .setNeutralButton("Cancel All") { _, _ ->
-                activeJobs.forEach { it.job.cancel() }
-                activeJobs.clear()
+                AutomationManager.clearAllJobs(context)
                 Toast.makeText(context, "All scheduled jobs cancelled", Toast.LENGTH_SHORT).show()
             }
             .show()

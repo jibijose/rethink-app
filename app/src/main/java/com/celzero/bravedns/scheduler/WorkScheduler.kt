@@ -44,10 +44,12 @@ class WorkScheduler(val context: Context, val persistentState: PersistentState) 
         const val BLOCKLIST_UPDATE_CHECK_JOB_TAG = "ScheduledBlocklistUpdateCheckJob"
         const val DATA_USAGE_JOB_TAG = "ScheduledDataUsageJob"
         const val CONSOLE_LOG_SAVE_JOB_TAG = "ConsoleLogSaveJob"
+        const val AUTOMATION_JOB_TAG = "ScheduledAutomationCatchUpJob"
         const val APP_EXIT_INFO_JOB_TIME_INTERVAL_DAYS: Long = 7
         const val PURGE_CONSOLE_LOGS_TIME_INTERVAL_HOURS: Long = 3
         const val BLOCKLIST_UPDATE_CHECK_INTERVAL_DAYS: Long = 3
         const val DATA_USAGE_TIME_INTERVAL_MINS: Long = 20
+        const val AUTOMATION_TIME_INTERVAL_MINS: Long = 15
 
         fun isWorkRunning(context: Context, tag: String): Boolean {
             val instance = WorkManager.getInstance(context)
@@ -237,6 +239,25 @@ class WorkScheduler(val context: Context, val persistentState: PersistentState) 
             .enqueueUniqueWork(
                 CONSOLE_LOG_SAVE_JOB_TAG,
                 ExistingWorkPolicy.REPLACE,
+                workRequest
+            )
+    }
+
+    fun scheduleAutomationJob() {
+        Logger.i(LOG_TAG_SCHEDULER, "Automation catch-up job scheduled")
+        val workRequest =
+            PeriodicWorkRequest.Builder(
+                AutomationWorker::class.java,
+                AUTOMATION_TIME_INTERVAL_MINS,
+                TimeUnit.MINUTES
+            )
+                .addTag(AUTOMATION_JOB_TAG)
+                .build()
+
+        WorkManager.getInstance(context.applicationContext)
+            .enqueueUniquePeriodicWork(
+                AUTOMATION_JOB_TAG,
+                ExistingPeriodicWorkPolicy.KEEP,
                 workRequest
             )
     }

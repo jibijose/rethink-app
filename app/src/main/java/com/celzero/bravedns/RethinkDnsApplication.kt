@@ -20,6 +20,7 @@ import com.celzero.bravedns.util.Logger.LOG_TAG_SCHEDULER
 import android.app.Application
 import android.content.pm.ApplicationInfo
 import android.os.StrictMode
+import com.celzero.bravedns.scheduler.AutomationManager
 import com.celzero.bravedns.scheduler.EnhancedBugReport
 import com.celzero.bravedns.scheduler.ScheduleManager
 import com.celzero.bravedns.scheduler.WorkScheduler
@@ -80,6 +81,8 @@ class RethinkDnsApplication : Application(), Configuration.Provider {
         get<WorkScheduler>().scheduleDataUsageJob()
         get<WorkScheduler>().schedulePurgeConnectionsLog()
         get<WorkScheduler>().schedulePurgeConsoleLogs()
+        get<WorkScheduler>().scheduleAutomationJob()
+        AutomationManager.init(this)
     }
 
     private fun turnOnStrictMode() {

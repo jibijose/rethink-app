@@ -47,6 +47,13 @@ class BootStartWorker(context: Context, params: WorkerParameters) :
     override suspend fun doWork(): Result {
         val eventType = inputData.getString(KEY_EVENT_TYPE) ?: BOOT_COMPLETE_EVENT
 
+        try {
+            AutomationManager.init(applicationContext)
+            AutomationManager.checkAndRunCatchUp(applicationContext)
+        } catch (e: Exception) {
+            Logger.e(LOG_TAG_VPN, "Error during automation catch-up on boot: ${e.message}", e)
+        }
+
         // MY_PACKAGE_REPLACED is intentionally exempt from this check so an app update
         // can restore a previously-running VPN.
         if (eventType != PACKAGE_REPLACED_EVENT && !persistentState.prefAutoStartBootUp) {

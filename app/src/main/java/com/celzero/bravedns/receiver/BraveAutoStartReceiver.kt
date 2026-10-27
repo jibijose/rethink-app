@@ -21,6 +21,7 @@ import com.celzero.bravedns.util.Logger.LOG_TAG_VPN
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.celzero.bravedns.scheduler.AutomationManager
 import com.celzero.bravedns.scheduler.BootStartWorker
 import com.celzero.bravedns.scheduler.BootStartWorker.Companion.BOOT_COMPLETE_EVENT
 import com.celzero.bravedns.scheduler.BootStartWorker.Companion.PACKAGE_REPLACED_EVENT
@@ -43,6 +44,12 @@ class BraveAutoStartReceiver : BroadcastReceiver(), KoinComponent {
         ) {
             Logger.w(LOG_TAG_VPN, "unhandled broadcast ${intent.action}")
             return
+        }
+
+        try {
+            AutomationManager.init(context)
+        } catch (e: Exception) {
+            Logger.e(LOG_TAG_VPN, "Error initializing AutomationManager on broadcast: ${e.message}", e)
         }
 
         // MY_PACKAGE_REPLACED is intentionally exempt: after an app update we want to
